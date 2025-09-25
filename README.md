@@ -176,4 +176,9 @@ The WebAssembly module was written in Rust and compiled to WASM using `wasm-bind
 It was built with **Rust 1.85.0**.
 The original Rust source code is obviously not available, but the generated C code from `wasm2c` is in the `assets` directory.
 
-Libraries used: `wasm-bindgen`, `rayon`, `generic-array`, `rand/rand_chacha`, `once_cell`.
+Libraries used: 
+- [`wasm-bindgen`](https://github.com/rustwasm/wasm-bindgen)
+- [`rayon`](https://github.com/rayon-rs/rayon)
+- [`generic-array`](https://github.com/fizyk20/generic-array)
+- [`rand/rand_chacha`](https://github.com/rust-random/rand)
+- [`once_cell`](https://github.com/matklad/once_cell)
