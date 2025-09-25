@@ -169,3 +169,11 @@ Request payload is constructed in the following way:
 - `referrer`: The document referrer.
 
 This payload is sent to `POST https://guns.lol/api/analytics/record` to record the view.
+
+## WASM Technical Details
+
+The WebAssembly module was written in Rust and compiled to WASM using `wasm-bindgen`.
+It was built with **Rust 1.85.0**.
+The original Rust source code is obviously not available, but the generated C code from `wasm2c` is in the `assets` directory.
+
+Libraries used: `wasm-bindgen`, `rayon`, `generic-array`, `rand/rand_chacha`, `once_cell`.
