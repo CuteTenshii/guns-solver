@@ -127,15 +127,15 @@ Request payload is constructed in the following way:
       "maybe hex?": 64,
       "maybe hex?": 64,
       "maybe hex?": 64,
-      "maybe hex?": 5,
+      "maybe hex?": 5
     },
-    // probably not in this order, this is just to better illustrate the structure
+    // order doesn't matter, keys are always different on each solve anyway
     "random string 1": "sha-256 hash of: public salt + challenge",
-    "random string 2": "sha-256 hash of: idk",
-    "random string 3": "sha-256 hash of: idk",
+    "random string 2": "sha-256 hash of: nonce + challenge",
+    "random string 3": "sha-256 hash of: nonce + public salt",
     "random string 4": "sha-256 hash of: idk",
     "random string 5": "sha-256 hash of: idk",
-    "random string 6": "sha-256 hash of: idk",
+    "random string 6": "5-chr"
   },
   "username": "profile username",
   "deviceType": "device type: desktop, tablet, mobile",
@@ -144,6 +144,12 @@ Request payload is constructed in the following way:
   "referrer": "document.referrer"
 }
 ```
+
+I tested the WASM in local with the same public salt, challenge, and nonce, and here's my findings:
+- `random string x` are ALWAYS different on each solve, but their values are not (see in the JSON above).
+- `__meta` keys are ALWAYS different on each solve, but their values are CONSTANT (5x "64" and 1x "5").
+- `__hcm._s` is ALWAYS the same. The same parameter is also in `_s._s`.
+- `__hcm._` and `__hcm._2` ALWAYS produce different values on each solve. Their purpose is unknown.
 
 **Keys which have an unknown purpose needs to be reverse engineered.**
 - `_t`: Turnstile response token, obtained from the Turnstile widget on the profile page.
