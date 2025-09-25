@@ -1,0 +1,38 @@
+POST https://guns.lol/api/analytics/record
+Content-Type: application/json
+
+{
+  "_t": "turnstile response",
+  "_s": {
+    "ps": "839198c382afb05ed1c5309486a1c9a4a634439866535f912db27d6a52d",
+    "_s": "db54e",
+    "n": "3e3xwVmOKMOYJxUZ"
+  },
+  "_c": "ad0bc1b3adb82e6af84f81415318ecebbed06b6bb31747a55138e700a148e1e9",
+  "_ps": "ODM5MTk4YzM4MmFmYjA1ZWQxYzUzMDk0ODZhMWM5YTRhNjM0NDM5ODY2NTM1ZjkxMmRiMjdkNmE1MmQ=",
+  "_ts": 1758743680,
+  "__hcm": {
+    "ywp26tf5QK": "4253cfedbc28a8730f8f76824692f420a7c652fe986a7cbe57aab4be2743aed5",
+    "I8H65VeT": "c864aa4295175a1d9db116812dadad6fbadb7856e973439acd38671f20ef57f5",
+    "kJf0eDITy": "f1855b6bcde7a8dd7b4a5e49dcefab44216893142c7e3eef04b99db5cdc5e44e",
+    "lYgzwCy6Wh": "e9ebff6bf216860c51cc636be2e4369d04bdbf82a72b1e954d77cb8d171f4938",
+    "YrE924fCRj": "95b532111c4b4d07bcd008fb5525eca3ce711dd9eb4d87fe356cf7afb7e26d67",
+    "yp6aDpn6": "5-chr",
+    "_": "d55a23d0b42c5536992ebee9513c03ede044b6966d05c6c9b53f1cc56cea19a7",
+    "__meta": {
+      "b6fcfa2cdea7e75": 64,
+      "e4e4ee6c3d24319": 64,
+      "eacbb24995c6109": 64,
+      "cffa1b927d128da": 64,
+      "3de5a6b97825303": 5,
+      "989c7889dfda718": 64
+    },
+    "_2": "d2b4d6583c6326cd2a23a210863e305e8d5fba2edcd0ab73f90d87801c7a068f",
+    "_s": "db54e"
+  },
+  "username": "username",
+  "deviceType": "desktop",
+  "event": "view",
+  "linkId": null,
+  "referrer": ""
+}
