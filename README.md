@@ -1,8 +1,16 @@
 # Guns.lol Solver
 
-A solver for the guns.lol WebAssembly script, which is used to record views on profile pages. Was cool to reverse engineer it :)
+A solver for the guns.lol WebAssembly script, which is used to record views on profile pages.
 
 **If you know anything about WASM or C, please help the project by contributing!**
+
+## Usage
+
+Requires Go.
+
+- Download the source code
+- Build it with `go build`
+- Run it with `./guns-solver -username <username>`
 
 ## How it works - Reverse Engineering
 
