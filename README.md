@@ -12,6 +12,16 @@ Requires Go.
 - Build it with `go build`
 - Run it with `./guns-solver -username <username>`
 
+## Progress
+
+**Static = values that never change based on the same challenge, public salt, and nonce.**<br>
+**Dynamic = values that change on EACH solve, whatever the input is.**
+
+- 4 of 5 static hashes in the payload have been reverse engineered.
+- No dynamic hashes in the payload have been reverse engineered.
+
+See [Payload construction](#payload-construction) for more details.
+
 ## How it works - Reverse Engineering
 
 This section explains how guns.lol's WebAssembly script works and how the solver interacts with it.
