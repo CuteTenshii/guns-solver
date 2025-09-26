@@ -133,7 +133,7 @@ Request payload is constructed in the following way:
     "random string 1": "sha-256 hash of: public salt + challenge",
     "random string 2": "sha-256 hash of: nonce + challenge",
     "random string 3": "sha-256 hash of: nonce + public salt",
-    "random string 4": "sha-256 hash of: idk",
+    "random string 4": "sha-256 hash of: wasm result + challenge",
     "random string 5": "sha-256 hash of: idk",
     "random string 6": "5-chr"
   },
@@ -167,7 +167,11 @@ I tested the WASM in local with the same public salt, challenge, and nonce, and 
   - `__meta`: An object with constant values (always five 64s and one 5).
   - Six random strings as keys, each containing a SHA-256 hash:
     - One is the hash of `public salt + challenge`.
-    - The other five hashes have unknown purposes.
+    - One is the hash of `nonce + challenge`.
+    - One is the hash of `nonce + public salt`.
+    - One is the hash of `wasm result + challenge`.
+    - One is the hash of an unknown value.
+    - One is always the string "5-chr".
 - `username`: The profile username.
 - `deviceType`: The type of device (e.g., desktop, tablet, mobile).
 - `event`: The event type, always "view".

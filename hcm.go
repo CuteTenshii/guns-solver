@@ -9,7 +9,7 @@ import (
 )
 
 // BuildHCM builds the Hash Challenge Metadata structure based on the WebAssembly analysis
-func BuildHCM(challenge, publicSalt, nonce string, difficulty int) map[string]interface{} {
+func BuildHCM(challenge, publicSalt, nonce string, difficulty int, wasmResult string) map[string]interface{} {
 	baseSeed := challenge + publicSalt + nonce
 
 	// Generate the core structure based on WebAssembly patterns
@@ -17,34 +17,28 @@ func BuildHCM(challenge, publicSalt, nonce string, difficulty int) map[string]in
 
 	// Generate 5-6 random keys with different lengths (observed pattern)
 	randomKeys := generateRandomKeys(baseSeed)
-	hashValues := generateHashValues(publicSalt, challenge, nonce)
+	hashValues := generateHashValues(publicSalt, challenge, nonce, wasmResult)
 
 	// Add the random key-value pairs (first 5 are hash values)
 	for i := 0; i < 5; i++ {
-		res[randomKeys[i]] = hashValues[i]
+		if hashValues[i] != "" { // Only add non-empty values
+			res[randomKeys[i]] = hashValues[i]
+		}
 	}
 
 	// The 6th key typically holds difficulty info
 	res[randomKeys[5]] = fmt.Sprintf("%d-chr", difficulty)
 
 	// Special underscore keys as documented in README
-	res["_"] = generateValidationHash(challenge, publicSalt, nonce, "primary")
-	res["_2"] = generateValidationHash(challenge, publicSalt, nonce, "secondary")
+	res["_"] = generateValidationHash(challenge, publicSalt, nonce, wasmResult, "primary")
+	res["_2"] = generateValidationHash(challenge, publicSalt, nonce, wasmResult, "secondary")
 
-	// Generate the 5-char hex WASM result like in the payload
-	wasmResult := generateWasmResultHex(challenge, publicSalt, nonce)
 	res["_s"] = wasmResult
 
 	// Add __meta object as documented: 5x "64" and 1x "5"
 	res["__meta"] = generateMetaObject(nonce, publicSalt)
 
 	return res
-}
-
-// generateWasmResultHex creates a 5-character hex result for HCM
-func generateWasmResultHex(challenge, publicSalt, nonce string) string {
-	// TODO: Need to reverse-engineer the exact algorithm used by WebAssembly
-	return ""
 }
 
 // Generate random-looking keys based on hash derivatives
@@ -82,11 +76,16 @@ func generateRandomKeys(baseSeed string) []string {
 
 // Generate hash values for the random keys based on discovered patterns
 // These should be 64-character SHA-256 hashes
-func generateHashValues(publicSalt, challenge, nonce string) []string {
+func generateHashValues(publicSalt, challenge, nonce, wasmResult string) []string {
 	values := make([]string, 5)
 
-	// val1
-	values[0] = ""
+	// val1 - SHA256(wasmResult + challenge)
+	if wasmResult != "" {
+		hash1 := sha256.Sum256([]byte(wasmResult + challenge))
+		values[0] = hex.EncodeToString(hash1[:])
+	} else {
+		values[0] = "" // Cannot calculate without WASM result
+	}
 
 	// val2 - SHA256(publicSalt + challenge)
 	hash2 := sha256.Sum256([]byte(publicSalt + challenge))
@@ -100,16 +99,16 @@ func generateHashValues(publicSalt, challenge, nonce string) []string {
 	hash4 := sha256.Sum256([]byte(nonce + publicSalt))
 	values[3] = hex.EncodeToString(hash4[:])
 
-	// val5
+	// val5 - Still unknown, but likely also depends on wasmResult
 	values[4] = ""
 
 	return values
 }
 
 // Generate validation hash for special keys (_ and _2)
-func generateValidationHash(challenge, publicSalt, nonce string, hashType string) string {
+func generateValidationHash(challenge, publicSalt, nonce, wasmResult, hashType string) string {
 	// TODO: Need to reverse-engineer the exact algorithm used by WebAssembly
-	// Based on analysis, these are different everytime
+	// Based on analysis, these are different everytime and might depend on wasmResult
 	return ""
 }
 

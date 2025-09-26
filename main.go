@@ -50,6 +50,7 @@ func main() {
 		Nonce:             res.Nonce,
 		Timestamp:         data.OriginalTimestamp,
 		Difficulty:        data.Difficulty,
+		ResultHash:        res.Hash,
 		TurnstileResponse: "", // TODO: Implement Turnstile challenge solving
 	})
 	if err != nil {

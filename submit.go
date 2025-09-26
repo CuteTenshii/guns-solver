@@ -15,11 +15,12 @@ type SolutionPayload struct {
 	Nonce             string
 	Timestamp         int64
 	Difficulty        int
+	ResultHash        string
 	TurnstileResponse string
 }
 
 func SubmitSolution(payload SolutionPayload) error {
-	hcm := BuildHCM(payload.Challenge, payload.PublicSalt, payload.Nonce, payload.Difficulty)
+	hcm := BuildHCM(payload.Challenge, payload.PublicSalt, payload.Nonce, payload.Difficulty, payload.ResultHash)
 
 	p := map[string]interface{}{
 		"_t": payload.TurnstileResponse,
