@@ -1,11 +1,13 @@
 package main
 
 import (
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
 	"fmt"
 	"strings"
+	"time"
 )
 
 // BuildHCM builds the Hash Challenge Metadata structure based on the WebAssembly analysis
@@ -30,8 +32,8 @@ func BuildHCM(challenge, publicSalt, nonce string, difficulty int, wasmResult st
 	res[randomKeys[5]] = fmt.Sprintf("%d-chr", difficulty)
 
 	// Special underscore keys as documented in README
-	res["_"] = generateValidationHash(challenge, publicSalt, nonce, wasmResult, "primary")
-	res["_2"] = generateValidationHash(challenge, publicSalt, nonce, wasmResult, "secondary")
+	res["_"] = generateUnderscoreHash(challenge, publicSalt, nonce, wasmResult)
+	res["_2"] = generateUnderscoreHash(challenge, publicSalt, nonce, wasmResult)
 
 	res["_s"] = wasmResult
 
@@ -98,9 +100,29 @@ func generateHashValues(publicSalt, challenge, nonce, wasmResult string) []strin
 	return values
 }
 
-// generateValidationHash generates validation hashes for special keys
-func generateValidationHash(challenge, publicSalt, nonce, wasmResult, hashType string) string {
-	return ""
+// generateUnderscoreHash generates validation hashes for special keys
+// Based on WebAssembly analysis: these are dynamic values using crypto-secure random generation
+func generateUnderscoreHash(challenge, publicSalt, nonce, wasmResult string) string {
+	// Generate base hash from all input parameters
+	baseInput := challenge + publicSalt + nonce + wasmResult + time.Now().String()
+	baseHash := sha256.Sum256([]byte(baseInput))
+
+	// Generate cryptographically secure random salt (32 bytes)
+	randomSalt := make([]byte, 32)
+	_, err := rand.Read(randomSalt)
+	if err != nil {
+		// Fallback to time-based generation if crypto/rand fails
+		timestamp := time.Now().UnixNano()
+		for i := 0; i < 32; i++ {
+			randomSalt[i] = byte(timestamp >> (i % 8 * 8))
+		}
+	}
+
+	// Combine base hash with random salt
+	combined := append(baseHash[:], randomSalt...)
+	finalHash := sha256.Sum256(combined)
+
+	return hex.EncodeToString(finalHash[:])
 }
 
 // generateMetaObject generates __meta object with hex keys and integer values

@@ -21,7 +21,9 @@ Requires Go.
   It produces a 5-character hexadecimal string. The issue is that some hashes use this value as input.
 - **5 of 5 static hashes** in the payload have been reverse engineered!
 - **0 of 2 dynamic hashes** in the payload have been reverse engineered.
-  Issue is how to find out what the input is, since it changes on each solve.
+  - Issue is how to find out what the input is, since it changes on each solve.
+  - For the moment, I just make a SHA-256 hash of a `challenge + public salt + nonce + wasm result + unix timestamp` string.
+  - In the C code, crypto functions like `crypto.randomFillSync` and `crypto.getRandomValues` are used, which are probably the reason why the output changes on each solve.
 
 See [Payload construction](#payload-construction) for more details.
 
