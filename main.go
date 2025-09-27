@@ -47,11 +47,11 @@ func main() {
 		Username:          *username,
 		PublicSalt:        data.PublicSalt,
 		Challenge:         data.Challenge,
-		Nonce:             res.Nonce,
+		Nonce:             data.Nonce,
 		Timestamp:         data.OriginalTimestamp,
 		Difficulty:        data.Difficulty,
-		ResultHash:        res.Hash,
-		TurnstileResponse: "", // TODO: Implement Turnstile challenge solving
+		ResultHash:        "db54e", //res.Hash,
+		TurnstileResponse: "",      // TODO: Implement Turnstile challenge solving
 	})
 	if err != nil {
 		println("Error submitting solution:", err.Error())

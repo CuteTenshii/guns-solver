@@ -17,8 +17,11 @@ Requires Go.
 **Static = values that never change based on the same challenge, public salt, and nonce.**<br>
 **Dynamic = values that change on EACH solve, whatever the input is.**
 
-- 4 of 5 static hashes in the payload have been reverse engineered.
-- No dynamic hashes in the payload have been reverse engineered.
+- **WASM result hasn't been reverse engineered yet.**
+  It produces a 5-character hexadecimal string. The issue is that some hashes use this value as input.
+- **5 of 5 static hashes** in the payload have been reverse engineered!
+- **0 of 2 dynamic hashes** in the payload have been reverse engineered.
+  Issue is how to find out what the input is, since it changes on each solve.
 
 See [Payload construction](#payload-construction) for more details.
 
@@ -144,7 +147,7 @@ Request payload is constructed in the following way:
     "random string 2": "sha-256 hash of: nonce + challenge",
     "random string 3": "sha-256 hash of: nonce + public salt",
     "random string 4": "sha-256 hash of: wasm result + challenge",
-    "random string 5": "sha-256 hash of: idk",
+    "random string 5": "sha-256 hash of: wasm result + challenge + public salt + nonce",
     "random string 6": "5-chr"
   },
   "username": "profile username",
@@ -172,15 +175,15 @@ I tested the WASM in local with the same public salt, challenge, and nonce, and 
   - `ps`: Public salt (same as `_ps` but not base64-encoded).
 - `__hcm`: An object containing:
   - `_s`: The result from the WebAssembly solver (same as in `_s._s`).
-  - `_`: A SHA-256 hash (purpose unknown).
-  - `_2`: Another SHA-256 hash (purpose unknown).
+  - `_`: A SHA-256 hash (purpose unknown). Changes on each solve.
+  - `_2`: Another SHA-256 hash (purpose unknown). Changes on each solve.
   - `__meta`: An object with constant values (always five 64s and one 5).
   - Six random strings as keys, each containing a SHA-256 hash:
     - One is the hash of `public salt + challenge`.
     - One is the hash of `nonce + challenge`.
     - One is the hash of `nonce + public salt`.
     - One is the hash of `wasm result + challenge`.
-    - One is the hash of an unknown value.
+    - One is the hash of `wasm result + challenge + public salt + nonce`
     - One is always the string "5-chr".
 - `username`: The profile username.
 - `deviceType`: The type of device (e.g., desktop, tablet, mobile).
