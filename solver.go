@@ -20,22 +20,22 @@ const (
 )
 
 type GunsSolver struct {
-	PublicSalt string
-	Challenge  string
-	Difficulty int
-	NonceStart string
-	Mode       DifficultyMode
-	Charset    string
+	Nonce         string
+	Underscore2xa string
+	Difficulty    int
+	O09           string
+	Mode          DifficultyMode
+	Charset       string
 }
 
-func NewGunsSolver(salt, challenge string, difficulty int, nonce string) GunsSolver {
+func NewGunsSolver(nonce, underscore2xa, o09 string) GunsSolver {
 	return GunsSolver{
-		PublicSalt: salt,
-		Challenge:  challenge,
-		Difficulty: difficulty,
-		NonceStart: nonce,
-		Mode:       LeadingHexNibbles,
-		Charset:    "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz",
+		Nonce:         nonce,
+		Underscore2xa: underscore2xa,
+		Difficulty:    5,
+		O09:           o09,
+		Mode:          LeadingHexNibbles,
+		Charset:       "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz",
 	}
 }
 
@@ -44,17 +44,17 @@ type SolveResult struct {
 	Hash  string // hex
 }
 
-// SolveConcurrent runs multiple workers to find a nonce. Returns the first found result or nil if ctx canceled.
+// SolveConcurrent runs multiple workers to find a Nonce. Returns the first found result or nil if ctx canceled.
 func (s *GunsSolver) SolveConcurrent(parentCtx context.Context) *SolveResult {
 	workers := runtime.NumCPU()
-	if s.NonceStart == "" {
-		s.NonceStart = "A"
+	if s.O09 == "" {
+		s.O09 = "A"
 	}
 
 	// quick path for trivial difficulty
 	if s.Difficulty <= 0 {
-		h := sha256.Sum256([]byte(s.PublicSalt + s.Challenge + s.NonceStart))
-		return &SolveResult{Nonce: s.NonceStart, Hash: hex.EncodeToString(h[:])}
+		h := sha256.Sum256([]byte(s.Nonce + s.Underscore2xa + s.O09))
+		return &SolveResult{Nonce: s.O09, Hash: hex.EncodeToString(h[:])}
 	}
 
 	// derive a cancelable context we can cancel internally
@@ -72,7 +72,7 @@ func (s *GunsSolver) SolveConcurrent(parentCtx context.Context) *SolveResult {
 	go func() {
 		defer wg.Done()
 		defer close(ch) // producer is sole closer of ch
-		seed := s.NonceStart
+		seed := s.O09
 		for {
 			select {
 			case ch <- seed:
@@ -98,7 +98,7 @@ func (s *GunsSolver) SolveConcurrent(parentCtx context.Context) *SolveResult {
 					default:
 					}
 
-					hash := sha256.Sum256([]byte(s.PublicSalt + s.Challenge + nonce))
+					hash := sha256.Sum256([]byte(s.Nonce + s.Underscore2xa + nonce))
 					if s.checkDifficulty(hash[:]) {
 						once.Do(func() {
 							resCh <- &SolveResult{Nonce: nonce, Hash: hex.EncodeToString(hash[:])}
@@ -194,31 +194,4 @@ func incrementStringWithCharset(s, charset string) string {
 	}
 	// all positions overflowed -> prepend first charset rune
 	return string(radix[0]) + string(runes)
-}
-
-func incrementString(s string) string {
-	runes := []rune(s)
-	for i := len(runes) - 1; i >= 0; i-- {
-		switch {
-		case runes[i] >= '0' && runes[i] < '9':
-			runes[i]++
-			return string(runes)
-		case runes[i] == '9':
-			runes[i] = 'A'
-			return string(runes)
-		case runes[i] >= 'A' && runes[i] < 'Z':
-			runes[i]++
-			return string(runes)
-		case runes[i] == 'Z':
-			runes[i] = 'a'
-			return string(runes)
-		case runes[i] >= 'a' && runes[i] < 'z':
-			runes[i]++
-			return string(runes)
-		case runes[i] == 'z':
-			runes[i] = '0'
-		}
-	}
-	// overflow: add a new 'A' at the beginning
-	return "A" + string(runes)
 }

@@ -4,6 +4,8 @@ A solver for the guns.lol WebAssembly script, which is used to record views on p
 
 **If you know anything about WASM or C, please help the project by contributing!**
 
+An update to the WASM script has been made on December 20, 2025.
+
 ## Usage
 
 Requires Go.
@@ -13,6 +15,13 @@ Requires Go.
 - Run it with `./guns-solver -username <username>`
 
 ## Progress
+
+TODO
+
+## Progress (old version)
+
+<details>
+<summary>Progress (old version)</summary>
 
 **Static = values that never change based on the same challenge, public salt, and nonce.**<br>
 **Dynamic = values that change on EACH solve, whatever the input is.**
@@ -41,7 +50,7 @@ Here the first script is also interesting because it contains some data which is
 
 A web worker is created with the following script:
 ```js
-import init, { GunsSolver } from 'https://assets.guns.lol/pkg/_gunslolpow.js';
+import init, { GunsSolver } from 'https://assets.guns.lol/pkg/gpp_gunslol.js';
 self.onmessage = async function (event) {
     const { ps, d, c, _n, org_ts } = event.data;
     await init();
@@ -78,7 +87,7 @@ worker.onmessage = async function (event) {
 
 The main script listens for messages from the worker and calls `getResult` with `_res` when it receives a message (the rest is not used). `getResult` is defined in a Next.js chunk (see below).
 
-### `_gunslolpow.js`
+### `gpp_gunslol.js`
 
 This script fetches a WebAssembly module (written in Rust) from `https://assets.guns.lol/pkg/_gunslolpow_bg.wasm` and instantiates it.
 Also, it exports the `GunsSolver` class, used in the worker script (see above).
@@ -207,3 +216,5 @@ Libraries used:
 - [`generic-array`](https://github.com/fizyk20/generic-array)
 - [`rand/rand_chacha`](https://github.com/rust-random/rand)
 - [`once_cell`](https://github.com/matklad/once_cell)
+
+</details>

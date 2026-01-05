@@ -17,18 +17,17 @@ var (
 			return http.ErrUseLastResponse
 		},
 	}
-	publicSaltRegex = regexp.MustCompile(`\s+ps: '([a-f0-9]{59,64})',`)
-	challengeRegex  = regexp.MustCompile(`\s+c: '([a-f0-9]{64})',`)
-	difficultyRegex = regexp.MustCompile(`\s+d: '(\d{1,3})',`)
-	nonceRegex      = regexp.MustCompile(`\s+_n: '([a-zA-Z0-9]{16})',`)
-	timestampRegex  = regexp.MustCompile(`\s+org_ts: '(\d+)'\\n`)
+	nonceRegex         = regexp.MustCompile(`_n: '([a-zA-Z0-9]{31,32})',`)
+	o09Regex           = regexp.MustCompile(`o09: '([a-f0-9]{64})',`)
+	underscore2xaRegex = regexp.MustCompile(`_2xa: '([a-zA-Z0-9_-]{118})',`)
+	timestampRegex     = regexp.MustCompile(`org_ts: \\"(\d+)\\",`)
 )
 
+// TODO: find better names
 type WorkerData struct {
-	PublicSalt        string
-	Challenge         string
-	Difficulty        int
 	Nonce             string
+	O09               string
+	Underscore2xa     string
 	OriginalTimestamp int64
 }
 
@@ -37,9 +36,11 @@ func FetchWorkerData(username string) (*WorkerData, error) {
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36")
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36")
+	req.AddCookie(&http.Cookie{Name: "GUNS_LOCALE", Value: "en"})
+	req.AddCookie(&http.Cookie{Name: "GUNS_PATH_LOCALE", Value: "en"})
 	if gunsClearance != "" {
-		req.Header.Set("Cookie", fmt.Sprintf("gunslol_clearance=%s", gunsClearance))
+		req.AddCookie(&http.Cookie{Name: "guns_clearance", Value: gunsClearance})
 	}
 
 	resp, err := httpClient.Do(req)
@@ -56,9 +57,9 @@ func FetchWorkerData(username string) (*WorkerData, error) {
 		}
 		foundClearance := false
 		for _, cookie := range resp.Cookies() {
-			// Extract the gunslol_clearance cookie
-			if cookie.Name == "gunslol_clearance" {
-				log.Println("Obtained \"gunslol_clearance\" cookie")
+			// Extract the guns_clearance cookie
+			if cookie.Name == "guns_clearance" {
+				log.Println("Obtained \"guns_clearance\" cookie")
 				gunsClearance = cookie.Value
 				foundClearance = true
 				break
@@ -66,12 +67,12 @@ func FetchWorkerData(username string) (*WorkerData, error) {
 		}
 		if !foundClearance {
 			return nil, err
-		} else {
-			return FetchWorkerData(username)
 		}
+
+		return FetchWorkerData(username)
 	}
 	if resp.StatusCode != http.StatusOK {
-		return nil, err
+		return nil, fmt.Errorf("status code: %d %s", resp.StatusCode, resp.Status)
 	}
 
 	bodyBytes, err := io.ReadAll(resp.Body)
@@ -79,30 +80,24 @@ func FetchWorkerData(username string) (*WorkerData, error) {
 		return nil, err
 	}
 
-	publicSalt := publicSaltRegex.FindStringSubmatch(string(bodyBytes))
-	challenge := challengeRegex.FindStringSubmatch(string(bodyBytes))
-	difficulty := difficultyRegex.FindStringSubmatch(string(bodyBytes))
 	nonce := nonceRegex.FindStringSubmatch(string(bodyBytes))
+	o09 := o09Regex.FindStringSubmatch(string(bodyBytes))
+	underscore2xa := underscore2xaRegex.FindStringSubmatch(string(bodyBytes))
 	timestamp := timestampRegex.FindStringSubmatch(string(bodyBytes))
 
-	if publicSalt == nil || challenge == nil || difficulty == nil || nonce == nil || timestamp == nil {
+	if nonce == nil || o09 == nil || underscore2xa == nil || timestamp == nil {
 		return nil, errors.New("failed to parse worker data from response")
 	}
 
-	diff, err := strconv.Atoi(difficulty[1])
-	if err != nil {
-		return nil, err
-	}
 	originalTs, err := strconv.ParseInt(timestamp[1], 10, 64)
 	if err != nil {
 		return nil, err
 	}
 
 	return &WorkerData{
-		PublicSalt:        publicSalt[1],
-		Challenge:         challenge[1],
-		Difficulty:        diff,
 		Nonce:             nonce[1],
+		O09:               o09[1],
+		Underscore2xa:     underscore2xa[1],
 		OriginalTimestamp: originalTs,
 	}, nil
 }

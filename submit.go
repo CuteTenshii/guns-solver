@@ -2,7 +2,6 @@ package main
 
 import (
 	"bytes"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -10,29 +9,28 @@ import (
 
 type SolutionPayload struct {
 	Username          string
-	PublicSalt        string
-	Challenge         string
+	Underscore2xa     string
 	Nonce             string
+	O09               string
 	Timestamp         int64
-	Difficulty        int
 	ResultHash        string
 	TurnstileResponse string
 }
 
 func SubmitSolution(payload SolutionPayload) error {
-	hcm := BuildHCM(payload.Challenge, payload.PublicSalt, payload.Nonce, payload.Difficulty, payload.ResultHash)
-
+	sealObject := map[string]string{
+		"_oo":  "",
+		"seal": "",
+	}
 	p := map[string]interface{}{
 		"_t": payload.TurnstileResponse,
-		"_s": map[string]interface{}{
-			"ps": payload.PublicSalt,
-			"_s": hcm["_s"],
-			"n":  payload.Nonce,
+		"_gpp_ch": []interface{}{
+			payload.Underscore2xa,
+			payload.Timestamp,
+			payload.O09,
+			payload.Nonce,
+			sealObject,
 		},
-		"_c":         payload.Challenge,
-		"_ps":        base64.StdEncoding.EncodeToString([]byte(payload.PublicSalt)),
-		"_ts":        payload.Timestamp,
-		"__hcm":      hcm,
 		"username":   payload.Username,
 		"deviceType": "desktop",
 		"event":      "view",

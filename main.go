@@ -20,19 +20,19 @@ func main() {
 	if err != nil {
 		println("Error fetching worker data:", err.Error())
 		os.Exit(1)
-	}
-	if workerData == nil {
+	} else if workerData == nil {
 		println("Failed to fetch worker data.")
 		os.Exit(1)
 	}
 	data := *workerData
 	println("Solving PoW...")
-	// to test if the solver works with already known values. See assets/request.http for reference
-	data.Nonce = "3e3xwVmOKMOYJxUZ"
-	data.PublicSalt = "839198c382afb05ed1c5309486a1c9a4a634439866535f912db27d6a52d"
-	data.Challenge = "ad0bc1b3adb82e6af84f81415318ecebbed06b6bb31747a55138e700a148e1e9"
 
-	solver := NewGunsSolver(data.PublicSalt, data.Challenge, data.Difficulty, data.Nonce)
+	// to test if the solver works with already known values. See assets/request.http for reference
+	data.Nonce = "Zn6F5oHCaRnX1vT9zQ81a4Ty7faAAGCb"
+	data.Underscore2xa = "oUAFFCgIIAUAAgEDBFRWE1Bbr_TxYzk5MjZmYWI4NTZkZjlhNjQ5YmY1MWM1NWUyOTk5ZDJmZjE1Y2ZiZGNjYjhjY2Q1YzgzNzMzNTc2NGIXqZPHa_eHIw"
+	data.O09 = "1867764c175fc766ce086157515853444b999d7f64d03cbe1d96b78cf6224e02"
+
+	solver := NewGunsSolver(data.Nonce, data.Underscore2xa, data.O09)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
@@ -45,11 +45,10 @@ func main() {
 
 	err = SubmitSolution(SolutionPayload{
 		Username:          *username,
-		PublicSalt:        data.PublicSalt,
-		Challenge:         data.Challenge,
 		Nonce:             data.Nonce,
+		O09:               data.O09,
 		Timestamp:         data.OriginalTimestamp,
-		Difficulty:        data.Difficulty,
+		Underscore2xa:     data.Underscore2xa,
 		ResultHash:        "db54e", //res.Hash,
 		TurnstileResponse: "",      // TODO: Implement Turnstile challenge solving
 	})

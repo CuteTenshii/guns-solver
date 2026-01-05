@@ -11,7 +11,7 @@ This directory contains various stuff which has been used to reverse engineer ho
 - `w2c_guns_gunssolver_solve_pow_0.c` - The C code for the `w2c_guns_gunssolver_solve_pow_0` function, extracted from `guns.c`. Variables have been renamed for clarity.
 - `next.js` - The JS script found in profile pages.
 - `4999-fa0fe6ccdca6b8ab.js` - The Next.js chunk containing the view recording logic.
-- `_gunslolpow.js` - The JS script loader by the `next.js` script.
+- `gpp_gunslol.js` - The JS script loader by the `next.js` script.
 
 ### C Files
 
