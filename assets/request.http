@@ -2,20 +2,18 @@ POST https://guns.lol/api/analytics/record
 Content-Type: application/json
 
 {
-  "_t": "turnstile response",
+  "_t": "turnstile",
   "_gpp_ch": [
-    "oUAFFCgIIAUAAgEDBFRWE1Bbr_TxYzk5MjZmYWI4NTZkZjlhNjQ5YmY1MWM1NWUyOTk5ZDJmZjE1Y2ZiZGNjYjhjY2Q1YzgzNzMzNTc2NGIXqZPHa_eHIw",
-    1767638499,
-    "1867764c175fc766ce086157515853444b999d7f64d03cbe1d96b78cf6224e02",
-    "Zn6F5oHCaRnX1vT9zQ81a4Ty7faAAGCb",
-    {
-      "_oo": "UQVkZTliMgAAAADV9yF_ff0_dA",
-      "seal": "c99262fa9b856df9a649dbf51c55e299b9d2ff15ecfbdccb8ccd5c837335764b"
-    }
+    "oUAFGQstNwcAAwECBPAjukSjH1C7ZTIxMDk4OWFmOThlMGYyODYzYjhlZWRkMGNhMDQ4ODI0Y2Q4MmM5MDc2ZmM5ZjUzNTE2YzQ4MDc0NzOOPcUuvyL-DQ",
+    1772912839,
+    "249b9f4b80ff1ddc3a29beba2e32897b1cde3ae0a4f22e997aa15e1a18fbf90f",
+    "AbY2Zd0ro2AtZPgFzftqG0r68pb9NmTp",
+    "e2109895af918e0f2863b8eed9d0ca048824cd82c90768fc9f535163c4807473",
+    "UQU5MTgzNQEAAAC2d9_3hPW6zw"
   ],
   "username": "tenshiifemboy",
   "deviceType": "desktop",
   "event": "view",
   "linkId": null,
-  "referrer": ""
+  "referrer": "https://guns.lol/tenshiifemboy"
 }

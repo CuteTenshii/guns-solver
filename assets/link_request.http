@@ -1,0 +1,10 @@
+POST https://guns.lol/api/analytics/record
+Content-Type: application/json
+
+{
+  "username": "tenshiifemboy",
+  "event": "click",
+  "linkId": "d6c3883e-2bfb-473a-9819-c39a5b549478",
+  "referrer": "https://guns.lol/tenshiifemboy",
+  "deviceType": "desktop"
+}
