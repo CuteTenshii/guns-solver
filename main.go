@@ -84,7 +84,7 @@ func main() {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			token, err := SolveTurnstile(ctx, *capmonsterKey, "https://guns.lol/"+*username, *proxy)
+			token, err := SolveTurnstile(ctx, *capmonsterKey, "https://guns.lol/"+*username)
 			turnstileCh <- turnstileResult{token, err}
 		}()
 	}
