@@ -6,8 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"net/url"
-	"strconv"
 	"time"
 )
 
@@ -50,31 +48,14 @@ type capmonsterResultResponse struct {
 	} `json:"solution"`
 }
 
-func SolveTurnstile(ctx context.Context, apiKey, pageURL, proxyURL string) (string, error) {
+func SolveTurnstile(ctx context.Context, apiKey, pageURL string) (string, error) {
 	task := capmonsterTask{
 		Type:       "TurnstileTaskProxyless",
 		WebsiteURL: pageURL,
 		WebsiteKey: turnstileSiteKey,
 	}
 
-	if proxyURL == "" {
-		pURL, err := url.Parse(proxyURL)
-		if err != nil {
-			return "", fmt.Errorf("invalid proxy URL: %w", err)
-		}
-		port, _ := strconv.Atoi(pURL.Port())
-		task.Type = "TurnstileTask"
-		task.ProxyType = pURL.Scheme
-		task.ProxyAddress = pURL.Hostname()
-		task.ProxyPort = port
-		if pURL.User != nil {
-			task.ProxyLogin = pURL.User.Username()
-			task.ProxyPassword, _ = pURL.User.Password()
-		}
-	}
-
 	createBody, _ := json.Marshal(capmonsterCreateRequest{ClientKey: apiKey, Task: task})
-
 	req, err := http.NewRequestWithContext(ctx, "POST", capmonsterURL+"/createTask", bytes.NewReader(createBody))
 	if err != nil {
 		return "", err
@@ -104,13 +85,13 @@ func SolveTurnstile(ctx context.Context, apiKey, pageURL, proxyURL string) (stri
 		case <-time.After(3 * time.Second):
 		}
 
-		req, err := http.NewRequestWithContext(ctx, "POST", capmonsterURL+"/getTaskResult", bytes.NewReader(resultBody))
+		req, err = http.NewRequestWithContext(ctx, "POST", capmonsterURL+"/getTaskResult", bytes.NewReader(resultBody))
 		if err != nil {
 			return "", err
 		}
 		req.Header.Set("Content-Type", "application/json")
 
-		resp, err := http.DefaultClient.Do(req)
+		resp, err = http.DefaultClient.Do(req)
 		if err != nil {
 			return "", err
 		}

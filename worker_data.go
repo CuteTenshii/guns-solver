@@ -71,7 +71,8 @@ func FetchWorkerData(ctx context.Context, username string) (*WorkerData, error) 
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36")
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36")
+
 	req.AddCookie(&http.Cookie{Name: "GUNS_LOCALE", Value: "en"})
 	req.AddCookie(&http.Cookie{Name: "GUNS_PATH_LOCALE", Value: "en"})
 	if gunsClearance != "" {
@@ -96,7 +97,7 @@ func FetchWorkerData(ctx context.Context, username string) (*WorkerData, error) 
 			os.Remove("clearance.txt")
 		}
 		log.Println("Got 401, solving clearance challenge...")
-		if err := solveChallenge(ctx, body); err != nil {
+		if err = solveChallenge(ctx, body); err != nil {
 			return nil, fmt.Errorf("challenge: %w", err)
 		}
 		return FetchWorkerData(ctx, username)
@@ -182,7 +183,7 @@ func solveChallenge(ctx context.Context, body string) error {
 		return err
 	}
 	req.Header.Set("Content-Type", w.FormDataContentType())
-	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36")
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36")
 
 	vresp, err := httpClient.Do(req)
 	if err != nil {
