@@ -3,7 +3,7 @@
 A solver for the guns.lol WebAssembly script, which is used to record views on profile pages.
 Why? Because I was bored and wanted to see how it worked.
 
-This only send one request per program execution, if you want to bot your profile views then scroll down.
+This only sends one request per program execution. If you want to bot your profile views then scroll down.
 
 Got banned, but idc check out [Miwa.lol](https://miwa.lol)! It's better than guns.lol :)
 
@@ -29,9 +29,11 @@ Usage of ./guns-solver.exe:
 
 ### Examples
 
+On Linux and macOS, the `.exe` extension is not present so remove it.
+
 To add a view to a user:
 ```shell
-./guns-solver.exe -username <username> -capmonster-key ... -proxy ... 
+./guns-solver.exe -username <username> -capmonster-key ... -proxy ...
 ```
 
 To add a link click:
@@ -48,7 +50,7 @@ Personally I got banned after multiple days **but** I've seen people I botted no
 1..100 | ForEach-Object -Parallel { Start-Process "guns-solver.exe" -ArgumentList "-username ....." } -ThrottleLimit 100
 ```
 
-**On Linux/macOS:** you can use GNU Parellel (100 is the number of repetitions, 40 is the number of parallel processes):
+**On Linux/macOS:** you can use GNU Parallel (100 is the number of repetitions, 40 is the number of parallel processes):
 ```shell
 seq 100 | parallel -j40 ./guns-solver -username .....
 ```
