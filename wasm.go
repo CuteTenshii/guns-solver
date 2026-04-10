@@ -5,6 +5,8 @@ import (
 	_ "embed"
 	"encoding/binary"
 	"fmt"
+	"os"
+	"path/filepath"
 
 	"github.com/tetratelabs/wazero"
 	"github.com/tetratelabs/wazero/api"
@@ -67,7 +69,12 @@ func (h *jsHeap) take(idx int32) any {
 func SolveWithWasm(ctx context.Context, o09 string, difficulty int, orgTs, nonce, twoXa string) (*WasmResult, error) {
 	hp := newJsHeap()
 
-	rt := wazero.NewRuntime(ctx)
+	cacheDir := filepath.Join(os.TempDir(), "guns-solver-wazero")
+	cache, err := wazero.NewCompilationCacheWithDir(cacheDir)
+	if err != nil {
+		return nil, fmt.Errorf("wazero cache: %w", err)
+	}
+	rt := wazero.NewRuntimeWithConfig(ctx, wazero.NewRuntimeConfig().WithCompilationCache(cache))
 	defer rt.Close(ctx)
 
 	// readStr reads a UTF-8 string from WASM linear memory.
