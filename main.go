@@ -10,6 +10,11 @@ import (
 	"time"
 )
 
+func fatalf(format string, a ...any) {
+	fmt.Fprintf(os.Stderr, format+"\n", a...)
+	os.Exit(1)
+}
+
 func main() {
 	username := flag.String("username", "", "Profile username")
 	capmonsterKey := flag.String("capmonster-key", "", "CapMonster API key for Turnstile solving")
@@ -17,55 +22,56 @@ func main() {
 	linkID := flag.String("link-id", "", "Link UUID to record a click event instead of a profile view")
 	flag.Parse()
 
-	if *username == "" {
-		println("Please provide a username using the -username flag.")
-		os.Exit(1)
-	}
-
-	if *proxy != "" {
-		if err := SetProxy(*proxy); err != nil {
-			fmt.Println("Invalid proxy URL:", err.Error())
-			os.Exit(1)
-		}
-	}
-
 	if *linkID != "" {
 		ctx, cancel := context.WithTimeout(context.Background(), 180*time.Second)
 		defer cancel()
 		if _, err := FetchWorkerData(ctx, *username); err != nil {
-			fmt.Println("Error acquiring clearance:", err.Error())
-			os.Exit(1)
+			fatalf("Error acquiring Cloudflare clearance: %s", err)
 		}
 		if err := SubmitLinkClick(*username, *linkID); err != nil {
-			println("Error submitting link click:", err.Error())
-			os.Exit(1)
+			fatalf("Error submitting link click: %s", err)
 		}
-		println("Link click submitted successfully!")
+		fmt.Println("Link click submitted successfully!")
 		return
+	}
+
+	if *username == "" {
+		fatalf("Missing required flag: -username\nExample: guns-solver -username <username>")
+	}
+	if *capmonsterKey == "" {
+		fatalf("Missing required flag: -capmonster-key (needed to solve Cloudflare Turnstile)")
+	}
+
+	if *proxy != "" {
+		if err := SetProxy(*proxy); err != nil {
+			fatalf("Invalid proxy URL: %s", err)
+		}
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 180*time.Second)
 	defer cancel()
 
+	fmt.Println("Fetching worker data...")
 	workerData, err := FetchWorkerData(ctx, *username)
 	if err != nil {
-		println("Error fetching worker data:", err.Error())
-		os.Exit(1)
-	} else if workerData == nil {
-		println("Failed to fetch worker data.")
-		os.Exit(1)
+		fatalf("Error fetching worker data: %s", err)
+	}
+	if workerData == nil {
+		fatalf("Error fetching worker data: no data returned")
 	}
 	data := *workerData
 
 	fmt.Println("Solving PoW and Turnstile simultaneously...")
 
 	type wasmResult struct {
-		res *WasmResult
-		err error
+		res      *WasmResult
+		err      error
+		duration time.Duration
 	}
 	type turnstileResult struct {
-		token string
-		err   error
+		token    string
+		err      error
+		duration time.Duration
 	}
 
 	wasmCh := make(chan wasmResult, 1)
@@ -76,38 +82,32 @@ func main() {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
+		start := time.Now()
 		res, err := SolveWithWasm(ctx, data.O09, 5, strconv.FormatInt(data.OriginalTimestamp, 10), data.Nonce, data.Underscore2xa)
-		wasmCh <- wasmResult{res, err}
+		wasmCh <- wasmResult{res, err, time.Since(start)}
 	}()
 
-	if *capmonsterKey != "" {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			token, err := SolveTurnstile(ctx, *capmonsterKey, "https://guns.lol/"+*username)
-			turnstileCh <- turnstileResult{token, err}
-		}()
-	}
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		start := time.Now()
+		token, err := SolveTurnstile(ctx, *capmonsterKey, "https://guns.lol/"+*username)
+		turnstileCh <- turnstileResult{token, err, time.Since(start)}
+	}()
 
 	wg.Wait()
 
 	wasmR := <-wasmCh
 	if wasmR.err != nil {
-		fmt.Println("Error solving PoW:", wasmR.err.Error())
-		os.Exit(1)
+		fatalf("Error solving PoW: %s", wasmR.err)
 	}
-	fmt.Printf("PoW solved! _oo=%s seal=%s\n", wasmR.res.Oo, wasmR.res.Seal)
+	fmt.Printf("PoW solved in %s! _oo=%s seal=%s\n", wasmR.duration.Round(time.Millisecond), wasmR.res.Oo, wasmR.res.Seal)
 
-	var turnstileToken string
-	if *capmonsterKey != "" {
-		tR := <-turnstileCh
-		if tR.err != nil {
-			fmt.Println("Error solving Turnstile:", tR.err.Error())
-			os.Exit(1)
-		}
-		turnstileToken = tR.token
-		fmt.Println("Turnstile solved!")
+	tR := <-turnstileCh
+	if tR.err != nil {
+		fatalf("Error solving Turnstile: %s", tR.err)
 	}
+	fmt.Printf("Turnstile solved in %s!\n", tR.duration.Round(time.Millisecond))
 
 	err = SubmitSolution(SolutionPayload{
 		Username:          *username,
@@ -117,12 +117,11 @@ func main() {
 		Underscore2xa:     data.Underscore2xa,
 		Oo:                wasmR.res.Oo,
 		Seal:              wasmR.res.Seal,
-		TurnstileResponse: turnstileToken,
+		TurnstileResponse: tR.token,
 	})
 	if err != nil {
-		println("Error submitting solution:", err.Error())
-		os.Exit(1)
+		fatalf("Error submitting solution: %s", err)
 	}
 
-	println("Solution submitted successfully!\n")
+	fmt.Println("Solution submitted successfully!")
 }

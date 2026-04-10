@@ -97,7 +97,10 @@ func SolveTurnstile(ctx context.Context, apiKey, pageURL string) (string, error)
 		}
 
 		var result capmonsterResultResponse
-		json.NewDecoder(resp.Body).Decode(&result)
+		if err = json.NewDecoder(resp.Body).Decode(&result); err != nil {
+			resp.Body.Close()
+			return "", fmt.Errorf("capmonster getTaskResult decode: %w", err)
+		}
 		resp.Body.Close()
 
 		if result.ErrorID != 0 {

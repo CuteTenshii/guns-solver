@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"mime/multipart"
 	"net/http"
 	"net/url"
@@ -96,7 +95,7 @@ func FetchWorkerData(ctx context.Context, username string) (*WorkerData, error) 
 			gunsClearance = ""
 			os.Remove("clearance.txt")
 		}
-		log.Println("Got 401, solving clearance challenge...")
+		fmt.Println("Got 401, solving clearance challenge...")
 		if err = solveChallenge(ctx, body); err != nil {
 			return nil, fmt.Errorf("challenge: %w", err)
 		}
@@ -161,12 +160,12 @@ func solveChallenge(ctx context.Context, body string) error {
 		return fmt.Errorf("invalid difficulty %q: %w", d[1], err)
 	}
 
-	log.Printf("Challenge params: o09=%s nonce=%s difficulty=%d", o09[1], nonce[1], difficulty)
+	fmt.Printf("Challenge params: o09=%s nonce=%s difficulty=%d\n", o09[1], nonce[1], difficulty)
 	res, err := SolveWithWasm(ctx, o09[1], difficulty, orgTs[1], nonce[1], twoXa[1])
 	if err != nil {
 		return fmt.Errorf("wasm solve: %w", err)
 	}
-	log.Printf("Challenge solved: _oo=%s", res.Oo)
+	fmt.Printf("Challenge solved: _oo=%s\n", res.Oo)
 
 	var buf bytes.Buffer
 	w := multipart.NewWriter(&buf)
