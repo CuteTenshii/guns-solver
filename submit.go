@@ -57,8 +57,11 @@ func SubmitLinkClick(username, linkID string) error {
 }
 
 func SubmitSolution(payload SolutionPayload) error {
-	insertPos := int(payload.Timestamp % 10)
-	seal := payload.Seal[:insertPos] + string(hexChars[rand.Intn(16)]) + payload.Seal[insertPos:]
+	insertPos1 := int(payload.Timestamp % 10)
+	seal := payload.Seal[:insertPos1] + string(hexChars[rand.Intn(16)]) + payload.Seal[insertPos1:]
+
+	insertPos2 := 16 + int(payload.Timestamp+int64(payload.Nonce[len(payload.Nonce)-1]))%24
+	seal = seal[:insertPos2] + string(hexChars[rand.Intn(16)]) + seal[insertPos2:]
 
 	p := map[string]interface{}{
 		"_t": payload.TurnstileResponse,
