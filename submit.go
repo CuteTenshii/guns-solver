@@ -40,7 +40,7 @@ func SubmitLinkClick(username, linkID string) error {
 		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36")
+	req.Header.Set("User-Agent", userAgent)
 	if gunsClearance != "" {
 		req.AddCookie(&http.Cookie{Name: "guns_clearance", Value: gunsClearance})
 	}
@@ -86,7 +86,7 @@ func SubmitSolution(payload SolutionPayload) error {
 		return err
 	}
 	req.Header.Set("Content-Type", "text/plain;charset=UTF-8")
-	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36")
+	req.Header.Set("User-Agent", userAgent)
 	req.Header.Set("Origin", "https://guns.lol")
 	req.Header.Set("Referer", "https://guns.lol/"+payload.Username)
 	req.Header.Set("Accept", "*/*")
