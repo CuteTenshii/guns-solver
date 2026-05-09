@@ -1,13 +1,13 @@
 # guns.lol solver
 
+<sub>Last update to the WASM script: December 20, 2025.</sub>
+
 A solver for the guns.lol WebAssembly script, which is used to record views on profile pages.
-Why? Because I was bored and wanted to see how it worked.
+Made it because I was bored and wanted to see how it worked.
 
 This only sends one request per program execution. If you want to bot your profile views then scroll down.
 
-Got banned, but idc check out [Miwa.lol](https://miwa.lol)! It's better than guns.lol :)
-
-Last update to the WASM script: December 20, 2025.
+For an alternative to guns.lol, check out [Miwa.lol](https://miwa.lol)! It's better than them :)
 
 ## Usage
 
@@ -41,9 +41,11 @@ To add a link click:
 ./guns-solver.exe -link-id <link-id>
 ```
 
-## Bot your views
+## Botting your views
 
-Personally I got banned after multiple days **but** I've seen people I botted not getting banned after multiple weeks. Their staff is lazy asf
+**Note:** You NEED proxies with a randomized IP for this to work. This is NOT optional since I estimate they rate limit user views to **1 view/per ip/per day**.
+
+Personally I got banned after multiple days **BUT** I've seen people I botted not getting banned after multiple weeks. Their staff is lazy asf
 
 **On Windows:** use this in PowerShell (replace 100 by the number of views you want to add):
 ```shell
