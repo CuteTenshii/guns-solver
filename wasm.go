@@ -15,6 +15,12 @@ import (
 //go:embed assets/gpp_gunslol_bg.wasm
 var wasmBytes []byte
 
+// heapReserved is the number of reserved slots at the head of the wasm-bindgen JS
+// heap. The generated glue seeds `heap` with 1024 undefined entries plus
+// [undefined, null, true, false], so indices 0-1027 are reserved and the free
+// list starts at 1028 (see dropObject's `idx < 1028` guard in gpp_gunslol.js).
+const heapReserved = 1028
+
 type WasmResult struct {
 	Oo   string
 	Seal string
@@ -27,8 +33,7 @@ type jsHeap struct {
 }
 
 func newJsHeap() *jsHeap {
-	// Indices 0-131 are reserved (0-127 = undefined, 128=undefined, 129=null, 130=true, 131=false).
-	return &jsHeap{objects: make([]any, 132), freeNext: 132}
+	return &jsHeap{objects: make([]any, heapReserved), freeNext: heapReserved}
 }
 
 func (h *jsHeap) add(obj any) int32 {
@@ -51,7 +56,7 @@ func (h *jsHeap) add(obj any) int32 {
 func (h *jsHeap) get(idx int32) any { return h.objects[idx] }
 
 func (h *jsHeap) drop(idx int32) {
-	if idx < 132 {
+	if idx < heapReserved {
 		return
 	}
 	h.objects[idx] = h.freeNext
@@ -86,16 +91,18 @@ func SolveWithWasm(ctx context.Context, o09 string, difficulty int, orgTs, nonce
 		return string(b)
 	}
 
-	hb := rt.NewHostModuleBuilder("wbg")
+	// The generated glue imports everything from the "./gpp_gunslol_bg.js" module.
+	// Import names are hashed per build; they change whenever the module is rebuilt.
+	hb := rt.NewHostModuleBuilder("./gpp_gunslol_bg.js")
 
-	// __wbg_new_405e22f390576ce2: () -> i32  — new Object()
+	// __wbg_new_da52cf8fe3429cb2: () -> i32  — new Object()
 	hb.NewFunctionBuilder().
 		WithGoModuleFunction(api.GoModuleFunc(func(_ context.Context, _ api.Module, stack []uint64) {
 			stack[0] = api.EncodeI32(hp.add(make(map[string]any)))
 		}), nil, []api.ValueType{api.ValueTypeI32}).
-		Export("__wbg_new_405e22f390576ce2")
+		Export("__wbg_new_da52cf8fe3429cb2")
 
-	// __wbg_set_3807d5f0bfc24aa7: (i32, i32, i32) -> void  — obj[key] = val
+	// __wbg_set_f071dbb3bd088e0e: (i32, i32, i32) -> void  — obj[key] = val
 	hb.NewFunctionBuilder().
 		WithGoModuleFunction(api.GoModuleFunc(func(_ context.Context, _ api.Module, stack []uint64) {
 			obj := hp.get(api.DecodeI32(stack[0])).(map[string]any)
@@ -103,14 +110,22 @@ func SolveWithWasm(ctx context.Context, o09 string, difficulty int, orgTs, nonce
 			val := hp.take(api.DecodeI32(stack[2]))
 			obj[key] = val
 		}), []api.ValueType{api.ValueTypeI32, api.ValueTypeI32, api.ValueTypeI32}, nil).
-		Export("__wbg_set_3807d5f0bfc24aa7")
+		Export("__wbg_set_f071dbb3bd088e0e")
 
-	// __wbindgen_number_new: (f64) -> i32
+	// __wbindgen_cast_0000000000000001: (f64) -> i32  — F64 -> Externref (boxes a number)
 	hb.NewFunctionBuilder().
 		WithGoModuleFunction(api.GoModuleFunc(func(_ context.Context, _ api.Module, stack []uint64) {
 			stack[0] = api.EncodeI32(hp.add(api.DecodeF64(stack[0])))
 		}), []api.ValueType{api.ValueTypeF64}, []api.ValueType{api.ValueTypeI32}).
-		Export("__wbindgen_number_new")
+		Export("__wbindgen_cast_0000000000000001")
+
+	// __wbindgen_cast_0000000000000002: (i32, i32) -> i32  — Ref(String) -> Externref
+	hb.NewFunctionBuilder().
+		WithGoModuleFunction(api.GoModuleFunc(func(_ context.Context, mod api.Module, stack []uint64) {
+			s := readStr(mod, api.DecodeI32(stack[0]), api.DecodeI32(stack[1]))
+			stack[0] = api.EncodeI32(hp.add(s))
+		}), []api.ValueType{api.ValueTypeI32, api.ValueTypeI32}, []api.ValueType{api.ValueTypeI32}).
+		Export("__wbindgen_cast_0000000000000002")
 
 	// __wbindgen_object_clone_ref: (i32) -> i32
 	hb.NewFunctionBuilder().
@@ -119,35 +134,20 @@ func SolveWithWasm(ctx context.Context, o09 string, difficulty int, orgTs, nonce
 		}), []api.ValueType{api.ValueTypeI32}, []api.ValueType{api.ValueTypeI32}).
 		Export("__wbindgen_object_clone_ref")
 
-	// __wbindgen_object_drop_ref: (i32) -> void
-	hb.NewFunctionBuilder().
-		WithGoModuleFunction(api.GoModuleFunc(func(_ context.Context, _ api.Module, stack []uint64) {
-			hp.drop(api.DecodeI32(stack[0]))
-		}), []api.ValueType{api.ValueTypeI32}, nil).
-		Export("__wbindgen_object_drop_ref")
-
-	// __wbindgen_rethrow: (i32) -> void
+	// __wbg___wbindgen_rethrow_4915403b40f010b4: (i32) -> void
 	hb.NewFunctionBuilder().
 		WithGoModuleFunction(api.GoModuleFunc(func(_ context.Context, _ api.Module, stack []uint64) {
 			panic(fmt.Sprintf("wasm rethrow: %v", hp.take(api.DecodeI32(stack[0]))))
 		}), []api.ValueType{api.ValueTypeI32}, nil).
-		Export("__wbindgen_rethrow")
+		Export("__wbg___wbindgen_rethrow_4915403b40f010b4")
 
-	// __wbindgen_string_new: (i32, i32) -> i32
-	hb.NewFunctionBuilder().
-		WithGoModuleFunction(api.GoModuleFunc(func(_ context.Context, mod api.Module, stack []uint64) {
-			s := readStr(mod, api.DecodeI32(stack[0]), api.DecodeI32(stack[1]))
-			stack[0] = api.EncodeI32(hp.add(s))
-		}), []api.ValueType{api.ValueTypeI32, api.ValueTypeI32}, []api.ValueType{api.ValueTypeI32}).
-		Export("__wbindgen_string_new")
-
-	// __wbindgen_throw: (i32, i32) -> void
+	// __wbg___wbindgen_throw_344f42d3211c4765: (i32, i32) -> void
 	hb.NewFunctionBuilder().
 		WithGoModuleFunction(api.GoModuleFunc(func(_ context.Context, mod api.Module, stack []uint64) {
 			msg := readStr(mod, api.DecodeI32(stack[0]), api.DecodeI32(stack[1]))
 			panic(fmt.Sprintf("wasm throw: %s", msg))
 		}), []api.ValueType{api.ValueTypeI32, api.ValueTypeI32}, nil).
-		Export("__wbindgen_throw")
+		Export("__wbg___wbindgen_throw_344f42d3211c4765")
 
 	if _, err := hb.Instantiate(ctx); err != nil {
 		return nil, fmt.Errorf("host module: %w", err)
@@ -158,7 +158,7 @@ func SolveWithWasm(ctx context.Context, o09 string, difficulty int, orgTs, nonce
 		return nil, fmt.Errorf("wasm instantiate: %w", err)
 	}
 
-	malloc := mod.ExportedFunction("__wbindgen_export_0")
+	malloc := mod.ExportedFunction("__wbindgen_export")
 	addToSP := mod.ExportedFunction("__wbindgen_add_to_stack_pointer")
 	newSolver := mod.ExportedFunction("gunssolver_new")
 	solvePow := mod.ExportedFunction("gunssolver_solve_pow")

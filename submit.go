@@ -20,7 +20,44 @@ type SolutionPayload struct {
 	TurnstileResponse string
 }
 
-const hexChars = "0123456789abcdef"
+// truncate shortens s to at most n characters for readable error messages.
+func truncate(s string, n int) string {
+	if len(s) > n {
+		return s[:n] + "..."
+	}
+	return s
+}
+
+// analyticsViewURL is the endpoint that records a profile view. Cloudflare's
+// Managed Challenge is attached to this path (not the profile page), so it is
+// also the URL FlareSolverr must hit to mint a cf_clearance cookie.
+const analyticsViewURL = "https://guns.lol/api/analytics/view"
+
+// gppFormatVersion is the constant "_c14f" value in the analytics payload.
+// It is 2 in every observed request and page (RSC) payload; its exact meaning
+// (schema/format version) is unconfirmed but it does not vary per request.
+const gppFormatVersion = 2
+
+// gppChallenge is the "_gpp_ch" object of the /api/analytics/view payload. The
+// server expects these obfuscated, build-stable key names; Go marshals struct
+// fields in declaration order, matching the observed request field order.
+type gppChallenge struct {
+	Version   int    `json:"_c14f"`
+	Timestamp int64  `json:"_e92a"`
+	O09       string `json:"_b73d"`
+	Nonce     string `json:"_a18c"`
+	Salt      string `json:"_f52b"` // _2xa (public salt) from the profile page
+	Oo        string `json:"_7bc1"` // _oo produced by the WASM solver
+}
+
+// recordBody is the full JSON body POSTed to /api/analytics/view.
+type recordBody struct {
+	Turnstile  string       `json:"_t"`
+	GppCh      gppChallenge `json:"_gpp_ch"`
+	Username   string       `json:"username"`
+	DeviceType string       `json:"deviceType"`
+	Referrer   string       `json:"referrer"`
+}
 
 func SubmitLinkClick(username, linkID string) error {
 	p := map[string]interface{}{
@@ -41,14 +78,13 @@ func SubmitLinkClick(username, linkID string) error {
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("User-Agent", userAgent)
-	if gunsClearance != "" {
-		req.AddCookie(&http.Cookie{Name: "guns_clearance", Value: gunsClearance})
-	}
+	addClearanceCookies(req)
 	resp, err := httpClient.Do(req)
 	if err != nil {
 		return err
 	}
 	defer resp.Body.Close()
+	captureCfClearance(resp)
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
 		return fmt.Errorf("failed to submit link click, status: %d, body: %s", resp.StatusCode, string(body))
@@ -57,38 +93,45 @@ func SubmitLinkClick(username, linkID string) error {
 }
 
 func SubmitSolution(payload SolutionPayload) error {
-	insertPos1 := int(payload.Timestamp % 10)
-	seal := payload.Seal[:insertPos1] + string(hexChars[rand.Intn(16)]) + payload.Seal[insertPos1:]
-
-	insertPos2 := 16 + int(payload.Timestamp+int64(payload.Nonce[len(payload.Nonce)-1]))%24
-	seal = seal[:insertPos2] + string(hexChars[rand.Intn(16)]) + seal[insertPos2:]
-
-	p := map[string]interface{}{
-		"_t": payload.TurnstileResponse,
-		"_gpp_ch": []interface{}{
-			payload.Underscore2xa,
-			payload.Timestamp,
-			payload.O09,
-			payload.Nonce,
-			seal,
-			payload.Oo,
+	body := recordBody{
+		Turnstile: payload.TurnstileResponse,
+		GppCh: gppChallenge{
+			Version:   gppFormatVersion,
+			Timestamp: payload.Timestamp,
+			O09:       payload.O09,
+			Nonce:     payload.Nonce,
+			Salt:      payload.Underscore2xa,
+			Oo:        payload.Oo,
 		},
-		"username":   payload.Username,
-		"deviceType": []string{"desktop", "mobile"}[rand.Intn(2)],
-		"event":      "view",
-		"linkId":     nil,
-		"referrer":   "https://miwa.lol/tenshii",
+		Username:   payload.Username,
+		DeviceType: "desktop", //[]string{"desktop", "mobile"}[rand.Intn(2)],
+		Referrer:   "",        //https://miwa.lol/tenshii", //"https://guns.lol/" + payload.Username,
 	}
-	jsonPayload, err := json.Marshal(p)
+	jsonPayload, err := json.Marshal(body)
 	if err != nil {
 		return err
 	}
 
-	req, err := http.NewRequest("POST", "https://guns.lol/api/analytics/record", bytes.NewReader(jsonPayload))
+	// Cloudflare gates this endpoint by client fingerprint: a raw Go client is
+	// challenged (403) while a real browser passes. When a FlareSolverr endpoint
+	// is configured, POST the payload through its browser instead of directly.
+	if flaresolverrEndpoint != "" {
+		status, respText, err := SubmitViaFlareSolverr(flaresolverrEndpoint, analyticsViewURL, string(jsonPayload), proxyURL)
+		if err != nil {
+			return fmt.Errorf("submit via flaresolverr: %w", err)
+		}
+		if status != http.StatusOK {
+			return fmt.Errorf("submit via flaresolverr returned origin status %d: %s", status, truncate(respText, 300))
+		}
+		return nil
+	}
+
+	req, err := http.NewRequest("POST", analyticsViewURL, bytes.NewReader(jsonPayload))
 	if err != nil {
 		return err
 	}
 	req.Header.Set("Content-Type", "text/plain;charset=UTF-8")
+	req.Header.Set("Cache-Control", "no-store")
 	req.Header.Set("User-Agent", userAgent)
 	req.Header.Set("Origin", "https://guns.lol")
 	req.Header.Set("Referer", "https://guns.lol/"+payload.Username)
@@ -103,19 +146,18 @@ func SubmitSolution(payload SolutionPayload) error {
 
 	req.AddCookie(&http.Cookie{Name: "GUNS_LOCALE", Value: "en"})
 	req.AddCookie(&http.Cookie{Name: "GUNS_PATH_LOCALE", Value: "en"})
-	if gunsClearance != "" {
-		req.AddCookie(&http.Cookie{Name: "guns_clearance", Value: gunsClearance})
-	}
+	addClearanceCookies(req)
 
 	resp, err := httpClient.Do(req)
 	if err != nil {
 		return err
 	}
 	defer resp.Body.Close()
+	captureCfClearance(resp)
 
-	body, _ := io.ReadAll(resp.Body)
+	respBody, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("failed to submit solution, status: %d, body: %s", resp.StatusCode, string(body))
+		return fmt.Errorf("failed to submit solution, status: %d, body: %s", resp.StatusCode, string(respBody))
 	}
 
 	return nil

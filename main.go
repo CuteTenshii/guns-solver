@@ -10,7 +10,11 @@ import (
 	"time"
 )
 
-const userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36"
+// userAgent is the User-Agent sent on every guns.lol request. It is a var, not
+// a const, because cf_clearance is bound to the UA that solved the Cloudflare
+// challenge: when FlareSolverr returns a clearance it also reports the UA it
+// used, and we overwrite this so the whole flow stays consistent.
+var userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36"
 
 func fatalf(format string, a ...any) {
 	fmt.Fprintf(os.Stderr, format+"\n", a...)
@@ -22,7 +26,18 @@ func main() {
 	capmonsterKey := flag.String("capmonster-key", "", "CapMonster API key for Turnstile solving")
 	proxy := flag.String("proxy", "", "Proxy URL for guns.lol requests (e.g. http://user:pass@host:port)")
 	linkID := flag.String("link-id", "", "Link UUID to record a click event instead of a profile view")
+	flaresolverr := flag.String("flaresolverr", "", "FlareSolverr endpoint (e.g. http://localhost:8191/v1) to POST the analytics record through a real browser, bypassing Cloudflare's bot check")
 	flag.Parse()
+
+	// Proxy is applied before any request (and used by FlareSolverr) so the whole
+	// flow shares one egress IP.
+	if *proxy != "" {
+		if err := SetProxy(*proxy); err != nil {
+			fatalf("Invalid proxy URL: %s", err)
+		}
+	}
+	proxyURL = *proxy
+	flaresolverrEndpoint = *flaresolverr
 
 	if *linkID != "" {
 		ctx, cancel := context.WithTimeout(context.Background(), 180*time.Second)
@@ -42,12 +57,6 @@ func main() {
 	}
 	if *capmonsterKey == "" {
 		fatalf("Missing required flag: -capmonster-key (needed to solve Cloudflare Turnstile)")
-	}
-
-	if *proxy != "" {
-		if err := SetProxy(*proxy); err != nil {
-			fatalf("Invalid proxy URL: %s", err)
-		}
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 180*time.Second)
@@ -93,7 +102,7 @@ func main() {
 	go func() {
 		defer wg.Done()
 		start := time.Now()
-		token, err := SolveTurnstile(ctx, *capmonsterKey, "https://guns.lol/"+*username)
+		token, err := SolveTurnstile(ctx, *capmonsterKey, "https://guns.lol/"+*username, data.O09)
 		turnstileCh <- turnstileResult{token, err, time.Since(start)}
 	}()
 

@@ -1,0 +1,19 @@
+POST https://guns.lol/api/analytics/record
+Content-Type: application/json
+
+{
+  "_t": "turnstile",
+  "_gpp_ch": [
+    "oUAFIQsJNwoDAAQCASaWk4ZeUW-zYzQwNjU4MDJkYTNlYWM4MDAzMTllNDZlN2IxYmFlYjY3ZTJlNGEzZjhiNWJmNDAxMGJmMzllYzg2YTMlgG4qIE3fLg",
+    1777187669,
+    "c27e3449707bb1d88e481f844b1cedeb047089abae61b244ebbdd507bc3fadd8",
+    "L9eJe4MCq8B4lMNLTlQ6KFNo95dCXE4r",
+    "c4065802dbdeca3eac800319e46e7b1bae0b67e72e4a3f8b5bf4010bfd39ec86a3",
+    "UQUwY2RkZQAAAAA6ubqI98vSYQ"
+  ],
+  "username": "tenshiifemboy",
+  "deviceType": "desktop",
+  "event": "view",
+  "linkId": null,
+  "referrer": "https://guns.lol/tenshiifemboy"
+}

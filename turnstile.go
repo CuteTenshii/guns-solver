@@ -23,6 +23,8 @@ type capmonsterTask struct {
 	Type          string `json:"type"`
 	WebsiteURL    string `json:"websiteURL"`
 	WebsiteKey    string `json:"websiteKey"`
+	PageAction    string `json:"pageAction"`
+	Data          string `json:"data"`
 	ProxyType     string `json:"proxyType,omitempty"`
 	ProxyAddress  string `json:"proxyAddress,omitempty"`
 	ProxyPort     int    `json:"proxyPort,omitempty"`
@@ -48,11 +50,13 @@ type capmonsterResultResponse struct {
 	} `json:"solution"`
 }
 
-func SolveTurnstile(ctx context.Context, apiKey, pageURL string) (string, error) {
+func SolveTurnstile(ctx context.Context, apiKey, pageURL, cData string) (string, error) {
 	task := capmonsterTask{
 		Type:       "TurnstileTaskProxyless",
 		WebsiteURL: pageURL,
 		WebsiteKey: turnstileSiteKey,
+		PageAction: "x_7a2",
+		Data:       cData,
 	}
 
 	createBody, _ := json.Marshal(capmonsterCreateRequest{ClientKey: apiKey, Task: task})

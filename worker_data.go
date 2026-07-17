@@ -19,15 +19,51 @@ func init() {
 	if data, err := os.ReadFile("clearance.txt"); err == nil {
 		gunsClearance = strings.TrimSpace(string(data))
 	}
+	if data, err := os.ReadFile("cf_clearance.txt"); err == nil {
+		cfClearance = strings.TrimSpace(string(data))
+	}
 }
 
 func saveClearance() {
 	os.WriteFile("clearance.txt", []byte(gunsClearance), 0600)
 }
 
+func saveCfClearance() {
+	os.WriteFile("cf_clearance.txt", []byte(cfClearance), 0600)
+}
+
+// addClearanceCookies attaches the guns.lol and Cloudflare clearance cookies to
+// req when they are known. cf_clearance is required by the Cloudflare Managed
+// Challenge in front of guns.lol; without it the API returns 403.
+func addClearanceCookies(req *http.Request) {
+	if gunsClearance != "" {
+		req.AddCookie(&http.Cookie{Name: "guns_clearance", Value: gunsClearance})
+	}
+	if cfClearance != "" {
+		req.AddCookie(&http.Cookie{Name: "cf_clearance", Value: cfClearance})
+	}
+}
+
+// captureCfClearance persists a cf_clearance cookie if the response sets one, so
+// a rotated value survives across requests and runs.
+func captureCfClearance(resp *http.Response) {
+	for _, c := range resp.Cookies() {
+		if c.Name == "cf_clearance" && c.Value != "" && c.Value != cfClearance {
+			cfClearance = c.Value
+			saveCfClearance()
+		}
+	}
+}
+
 var (
 	gunsClearance = ""
-	httpClient    = &http.Client{
+	cfClearance   = ""
+	// flaresolverrEndpoint, when set, routes the analytics POST through a
+	// FlareSolverr browser (which passes Cloudflare); proxyURL is the upstream
+	// proxy both FlareSolverr and the direct requests egress through.
+	flaresolverrEndpoint = ""
+	proxyURL             = ""
+	httpClient           = &http.Client{
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			return http.ErrUseLastResponse
 		},
@@ -74,15 +110,14 @@ func FetchWorkerData(ctx context.Context, username string) (*WorkerData, error) 
 
 	req.AddCookie(&http.Cookie{Name: "GUNS_LOCALE", Value: "en"})
 	req.AddCookie(&http.Cookie{Name: "GUNS_PATH_LOCALE", Value: "en"})
-	if gunsClearance != "" {
-		req.AddCookie(&http.Cookie{Name: "guns_clearance", Value: gunsClearance})
-	}
+	addClearanceCookies(req)
 
 	resp, err := httpClient.Do(req)
 	if err != nil {
 		return nil, err
 	}
 	defer resp.Body.Close()
+	captureCfClearance(resp)
 
 	bodyBytes, err := io.ReadAll(resp.Body)
 	if err != nil {
@@ -183,12 +218,14 @@ func solveChallenge(ctx context.Context, body string) error {
 	}
 	req.Header.Set("Content-Type", w.FormDataContentType())
 	req.Header.Set("User-Agent", userAgent)
+	addClearanceCookies(req)
 
 	vresp, err := httpClient.Do(req)
 	if err != nil {
 		return err
 	}
 	defer vresp.Body.Close()
+	captureCfClearance(vresp)
 	io.ReadAll(vresp.Body) // drain
 
 	if vresp.StatusCode != http.StatusOK {

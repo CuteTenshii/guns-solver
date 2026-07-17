@@ -1,6 +1,6 @@
 # guns.lol solver
 
-<sub>Last update to the WASM script: December 20, 2025.</sub>
+<sub>Last update to the WASM script: July 14, 2026.</sub>
 
 A solver for the guns.lol WebAssembly script, which is used to record views on profile pages.
 Made it because I was bored and wanted to see how it worked.
@@ -11,7 +11,13 @@ For an alternative to guns.lol, check out [Miwa.lol](https://miwa.lol)! It's bet
 
 ## Usage
 
-- Install [Go](https://go.dev/dl/)
+### Prerequisites
+
+- [Go](https://go.dev/dl/)
+- [Docker](https://docs.docker.com/desktop/#next-steps) (for FlareSolverr)
+
+### Steps 
+
 - Download or clone the source code
 - Open a Command Prompt/Terminal in the same folder, and run `go build .`
 - Then run the program:
@@ -19,6 +25,8 @@ For an alternative to guns.lol, check out [Miwa.lol](https://miwa.lol)! It's bet
 Usage of ./guns-solver.exe:
   -capmonster-key string
         CapMonster API key for Cloudflare Turnstile solving
+  -flaresolverr string
+        FlareSolverr endpoint (e.g. http://localhost:8191/v1) to POST the analytics record through a real browser, bypassing Cloudflare's bot check
   -link-id string
         Link UUID to record a click event instead of a profile view
   -proxy string
@@ -26,6 +34,17 @@ Usage of ./guns-solver.exe:
   -username string
         Profile username
 ```
+
+## Cloudflare
+
+guns.lol puts a Cloudflare bot check on the analytics endpoint that gates by the presence of `cf_clearance`, a client without this cookie gets a Cloudflare challenge.
+
+To get around it, the tool `POST`s the record through a real browser via FlareSolverr:
+```shell
+docker compose up -d # starts FlareSolverr on 127.0.0.1:8191
+```
+
+Then pass `-flaresolverr http://localhost:8191/v1`. Your `-proxy` is forwarded to FlareSolverr (credentials split out, since Chrome rejects inline-auth proxy URLs) so the browser and the tool share one egress IP.
 
 ### Examples
 
