@@ -1,2 +1,6 @@
 .idea
 *clearance.txt
+
+# Built binary
+/guns-solver
+/guns-solver.exe
