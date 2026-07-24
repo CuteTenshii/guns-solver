@@ -12,13 +12,29 @@ import (
 	"github.com/tetratelabs/wazero/api"
 )
 
+// clearanceWasm is the stable PoW binary for the legacy guns_clearance 401
+// interstitial (a separate subsystem from the rotating view PoW). Its exports
+// are fixed, so it is embedded rather than fetched.
+//
 //go:embed assets/gpp_gunslol_bg.wasm
-var wasmBytes []byte
+var clearanceWasm []byte
+
+// clearancePowModule wraps the embedded clearance binary as a powModule with
+// its fixed export names, so the guns_clearance flow can share SolveWithWasm
+// with the fetched view-PoW modules.
+func clearancePowModule() *powModule {
+	return &powModule{
+		wasm:        clearanceWasm,
+		ctorExport:  "gunssolver_new",
+		solveExport: "gunssolver_solve_pow",
+	}
+}
 
 // heapReserved is the number of reserved slots at the head of the wasm-bindgen JS
 // heap. The generated glue seeds `heap` with 1024 undefined entries plus
 // [undefined, null, true, false], so indices 0-1027 are reserved and the free
-// list starts at 1028 (see dropObject's `idx < 1028` guard in gpp_gunslol.js).
+// list starts at 1028 (matching the wasm-bindgen glue's `dropObject` guard,
+// `if (idx < 1028) return`).
 const heapReserved = 1028
 
 type WasmResult struct {
@@ -69,9 +85,10 @@ func (h *jsHeap) take(idx int32) any {
 	return obj
 }
 
-// SolveWithWasm runs the guns.lol WASM proof-of-work solver via wazero.
-// Parameters match the GunsSolver constructor: (o09, difficulty, orgTs, nonce, twoXa).
-func SolveWithWasm(ctx context.Context, o09 string, difficulty int, orgTs, nonce, twoXa string) (*WasmResult, error) {
+// SolveWithWasm runs the guns.lol WASM proof-of-work solver via wazero against
+// the fetched, rotation-specific module m. Parameters match the GunsSolver
+// constructor: (challenge, difficulty, orgTs, nonce, seal).
+func SolveWithWasm(ctx context.Context, m *powModule, challenge string, difficulty int, orgTs, nonce, seal string) (*WasmResult, error) {
 	hp := newJsHeap()
 
 	cacheDir := filepath.Join(os.TempDir(), "guns-solver-wazero")
@@ -153,15 +170,23 @@ func SolveWithWasm(ctx context.Context, o09 string, difficulty int, orgTs, nonce
 		return nil, fmt.Errorf("host module: %w", err)
 	}
 
-	mod, err := rt.Instantiate(ctx, wasmBytes)
+	mod, err := rt.Instantiate(ctx, m.wasm)
 	if err != nil {
 		return nil, fmt.Errorf("wasm instantiate: %w", err)
 	}
 
+	// guns.lol rotates the PoW binary and re-hashes its export symbols per
+	// challenge, so the constructor/solve names come from the fetched glue (see
+	// powModule). malloc/realloc/stack-pointer export names are stable. The ABI
+	// is unchanged: the constructor is (challenge, difficulty, orgTs, nonce,
+	// seal) -> ptr and solve writes 3×i32 to a return slot.
 	malloc := mod.ExportedFunction("__wbindgen_export")
 	addToSP := mod.ExportedFunction("__wbindgen_add_to_stack_pointer")
-	newSolver := mod.ExportedFunction("gunssolver_new")
-	solvePow := mod.ExportedFunction("gunssolver_solve_pow")
+	newSolver := mod.ExportedFunction(m.ctorExport)
+	solvePow := mod.ExportedFunction(m.solveExport)
+	if newSolver == nil || solvePow == nil {
+		return nil, fmt.Errorf("wasm missing exports (ctor=%q solve=%q)", m.ctorExport, m.solveExport)
+	}
 
 	// allocStr copies s into WASM linear memory and returns (ptr, len).
 	allocStr := func(s string) (uint32, uint32) {
@@ -175,10 +200,10 @@ func SolveWithWasm(ctx context.Context, o09 string, difficulty int, orgTs, nonce
 		return ptr, uint32(len(b))
 	}
 
-	p0, l0 := allocStr(o09)
+	p0, l0 := allocStr(challenge)
 	p1, l1 := allocStr(orgTs)
 	p2, l2 := allocStr(nonce)
-	p3, l3 := allocStr(twoXa)
+	p3, l3 := allocStr(seal)
 
 	// gunssolver_new(ptr_o09, len_o09, difficulty, ptr_org_ts, len_org_ts, ptr_nonce, len_nonce, ptr_2xa, len_2xa) -> i32
 	solverRes, err := newSolver.Call(ctx,
@@ -220,10 +245,13 @@ func SolveWithWasm(ctx context.Context, o09 string, difficulty int, orgTs, nonce
 	if !ok {
 		return nil, fmt.Errorf("unexpected result type from solve_pow")
 	}
-	return &WasmResult{
-		Oo:   result["_oo"].(string),
-		Seal: result["seal"].(string),
-	}, nil
+	oo, ok := result["_oo"].(string)
+	if !ok {
+		return nil, fmt.Errorf("solve_pow result missing _oo string")
+	}
+	// The rebuilt worker only reads _oo; seal is no longer guaranteed to be set.
+	sealOut, _ := result["seal"].(string)
+	return &WasmResult{Oo: oo, Seal: sealOut}, nil
 }
 
 func readMem(mem api.Memory, offset, size uint32) []byte {

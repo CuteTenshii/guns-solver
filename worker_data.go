@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -10,26 +11,36 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
 )
 
+// The guns_clearance and cf_clearance cookies are cached between runs in the
+// same temp dir as the fetched PoW modules (powCacheRoot).
+func clearanceFile() string   { return filepath.Join(powCacheRoot, "clearance.txt") }
+func cfClearanceFile() string { return filepath.Join(powCacheRoot, "cf_clearance.txt") }
+
 func init() {
-	if data, err := os.ReadFile("clearance.txt"); err == nil {
+	if data, err := os.ReadFile(clearanceFile()); err == nil {
 		gunsClearance = strings.TrimSpace(string(data))
 	}
-	if data, err := os.ReadFile("cf_clearance.txt"); err == nil {
+	if data, err := os.ReadFile(cfClearanceFile()); err == nil {
 		cfClearance = strings.TrimSpace(string(data))
 	}
 }
 
 func saveClearance() {
-	os.WriteFile("clearance.txt", []byte(gunsClearance), 0600)
+	if err := os.MkdirAll(powCacheRoot, 0700); err == nil {
+		os.WriteFile(clearanceFile(), []byte(gunsClearance), 0600)
+	}
 }
 
 func saveCfClearance() {
-	os.WriteFile("cf_clearance.txt", []byte(cfClearance), 0600)
+	if err := os.MkdirAll(powCacheRoot, 0700); err == nil {
+		os.WriteFile(cfClearanceFile(), []byte(cfClearance), 0600)
+	}
 }
 
 // addClearanceCookies attaches the guns.lol and Cloudflare clearance cookies to
@@ -58,22 +69,25 @@ func captureCfClearance(resp *http.Response) {
 var (
 	gunsClearance = ""
 	cfClearance   = ""
-	// flaresolverrEndpoint, when set, routes the analytics POST through a
-	// FlareSolverr browser (which passes Cloudflare); proxyURL is the upstream
-	// proxy both FlareSolverr and the direct requests egress through.
-	flaresolverrEndpoint = ""
-	proxyURL             = ""
-	httpClient           = &http.Client{
+	// proxyURL is the upstream proxy every request egresses through; it is also
+	// passed to CapMonster when minting a cf_clearance cookie so the cookie's
+	// bound IP matches the tool's.
+	proxyURL   = ""
+	httpClient = &http.Client{
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			return http.ErrUseLastResponse
 		},
 	}
-	// Profile page regexes (single-quoted JS values)
-	nonceRegex         = regexp.MustCompile(`_n: '([a-zA-Z0-9]{31,32})',`)
-	o09Regex           = regexp.MustCompile(`o09: '([a-f0-9]{64})',`)
-	underscore2xaRegex = regexp.MustCompile(`_2xa: '([a-zA-Z0-9_-]{80,})',`)
-	timestampRegex     = regexp.MustCompile(`org_ts: \\"(\d+)\\",`)
-	// Challenge page regexes (double-quoted JS object fields in _gs_sets)
+	// gppChRegex captures the `_gpp_ch` challenge object out of the profile
+	// page's Next.js flight payload. Interior quotes are backslash-escaped there
+	// (the object lives inside a JS string literal), so the captured group is
+	// unescaped before it parses as JSON. The object is flat, so a brace-free
+	// body ([^{}]*) matches its full extent.
+	gppChRegex = regexp.MustCompile(`\\"_gpp_ch\\":(\{[^{}]*\})`)
+	// flightUnescaper turns the escaped flight-payload substring back into JSON.
+	flightUnescaper = strings.NewReplacer(`\"`, `"`, `\\`, `\`, `\/`, `/`)
+	// Challenge page regexes (double-quoted JS object fields in _gs_sets), used
+	// by the legacy guns_clearance interstitial.
 	challengeNonceRegex = regexp.MustCompile(`[{,]_n:"([^"]+)"`)
 	challengeO09Regex   = regexp.MustCompile(`[{,]o09:"([^"]+)"`)
 	challenge2xaRegex   = regexp.MustCompile(`[{,]_2xa:"([^"]+)"`)
@@ -93,12 +107,59 @@ func SetProxy(rawURL string) error {
 	return nil
 }
 
-// TODO: find better names
+// WorkerData is the guns.lol proof-of-work challenge scraped from a profile
+// page's Next.js flight payload (the `_gpp_ch` object). The obfuscated single-
+// letter page keys are expanded here; each field comment names its on-page key.
 type WorkerData struct {
-	Nonce             string
-	O09               string
-	Underscore2xa     string
-	OriginalTimestamp int64
+	Version    int    // v — payload schema version
+	ID         string // e — challenge id (first path segment of WorkerURL)
+	WorkerURL  string // u — same-origin path of the PoW worker module
+	Timestamp  int64  // t — challenge issue time (unix seconds)
+	Nonce      string // n — per-challenge nonce
+	Seal       string // s — opaque server seal, replayed in the solution
+	Challenge  string // c — 64-char hex challenge input to the solver
+	Difficulty int    // d — required proof difficulty
+	CData      string // cd — Turnstile data-cdata
+	Action     string // a — Turnstile data-action
+}
+
+// gppChallengeData mirrors the on-page `_gpp_ch` JSON with its raw short keys.
+type gppChallengeData struct {
+	V  int    `json:"v"`
+	E  string `json:"e"`
+	U  string `json:"u"`
+	T  int64  `json:"t"`
+	N  string `json:"n"`
+	S  string `json:"s"`
+	C  string `json:"c"`
+	D  int    `json:"d"`
+	Cd string `json:"cd"`
+	A  string `json:"a"`
+}
+
+// parseGppChallenge extracts and decodes the `_gpp_ch` challenge object from a
+// profile page body.
+func parseGppChallenge(body string) (*WorkerData, error) {
+	m := gppChRegex.FindStringSubmatch(body)
+	if m == nil {
+		return nil, errors.New("failed to locate _gpp_ch challenge in page")
+	}
+	var ch gppChallengeData
+	if err := json.Unmarshal([]byte(flightUnescaper.Replace(m[1])), &ch); err != nil {
+		return nil, fmt.Errorf("decode _gpp_ch: %w", err)
+	}
+	return &WorkerData{
+		Version:    ch.V,
+		ID:         ch.E,
+		WorkerURL:  ch.U,
+		Timestamp:  ch.T,
+		Nonce:      ch.N,
+		Seal:       ch.S,
+		Challenge:  ch.C,
+		Difficulty: ch.D,
+		CData:      ch.Cd,
+		Action:     ch.A,
+	}, nil
 }
 
 func FetchWorkerData(ctx context.Context, username string) (*WorkerData, error) {
@@ -128,7 +189,7 @@ func FetchWorkerData(ctx context.Context, username string) (*WorkerData, error) 
 	if resp.StatusCode == http.StatusUnauthorized {
 		if gunsClearance != "" {
 			gunsClearance = ""
-			os.Remove("clearance.txt")
+			os.Remove(clearanceFile())
 		}
 		fmt.Println("Got 401, solving clearance challenge...")
 		if err = solveChallenge(ctx, body); err != nil {
@@ -156,28 +217,13 @@ func FetchWorkerData(ctx context.Context, username string) (*WorkerData, error) 
 		return nil, fmt.Errorf("status code: %d %s", resp.StatusCode, resp.Status)
 	}
 
-	nonce := nonceRegex.FindStringSubmatch(body)
-	o09 := o09Regex.FindStringSubmatch(body)
-	underscore2xa := underscore2xaRegex.FindStringSubmatch(body)
-	timestamp := timestampRegex.FindStringSubmatch(body)
-
-	if nonce == nil || o09 == nil || underscore2xa == nil || timestamp == nil {
-		return nil, errors.New("failed to parse worker data from response")
-	}
-
-	originalTs, err := strconv.ParseInt(timestamp[1], 10, 64)
-	if err != nil {
-		return nil, err
-	}
-
-	return &WorkerData{
-		Nonce:             nonce[1],
-		O09:               o09[1],
-		Underscore2xa:     underscore2xa[1],
-		OriginalTimestamp: originalTs,
-	}, nil
+	return parseGppChallenge(body)
 }
 
+// solveChallenge handles the guns_clearance 401 interstitial (solve a PoW →
+// POST /_challenge/verify → guns_clearance cookie). This is a separate,
+// stable subsystem from the rotating view PoW: it uses the `_gs_sets` challenge
+// format and the embedded clearance binary.
 func solveChallenge(ctx context.Context, body string) error {
 	nonce := challengeNonceRegex.FindStringSubmatch(body)
 	o09 := challengeO09Regex.FindStringSubmatch(body)
@@ -196,7 +242,7 @@ func solveChallenge(ctx context.Context, body string) error {
 	}
 
 	fmt.Printf("Challenge params: o09=%s nonce=%s difficulty=%d\n", o09[1], nonce[1], difficulty)
-	res, err := SolveWithWasm(ctx, o09[1], difficulty, orgTs[1], nonce[1], twoXa[1])
+	res, err := SolveWithWasm(ctx, clearancePowModule(), o09[1], difficulty, orgTs[1], nonce[1], twoXa[1])
 	if err != nil {
 		return fmt.Errorf("wasm solve: %w", err)
 	}

@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -9,15 +10,22 @@ import (
 	"net/http"
 )
 
+// SolutionPayload holds everything needed to record a profile view: the scraped
+// `_gpp_ch` challenge fields, the WASM proof, and the Turnstile token.
 type SolutionPayload struct {
-	Username          string
-	Underscore2xa     string
-	Nonce             string
-	O09               string
-	Timestamp         int64
-	Oo                string
-	Seal              string
-	TurnstileResponse string
+	Username  string
+	Version   int    // v
+	ID        string // e
+	Timestamp int64  // t
+	Nonce     string // n
+	Seal      string // s
+	Challenge string // c
+	Proof     string // _oo produced by the WASM solver
+	Token     string // Turnstile token
+	Referrer  string
+	// DeviceNum is the numeric device enum guns.lol now expects:
+	// desktop=0, mobile=1, tablet=2.
+	DeviceNum int
 }
 
 // truncate shortens s to at most n characters for readable error messages.
@@ -29,35 +37,9 @@ func truncate(s string, n int) string {
 }
 
 // analyticsViewURL is the endpoint that records a profile view. Cloudflare's
-// Managed Challenge is attached to this path (not the profile page), so it is
-// also the URL FlareSolverr must hit to mint a cf_clearance cookie.
+// Managed Challenge is attached to this path (not the profile page), so a raw
+// client without a valid cf_clearance cookie is answered with a 403 challenge.
 const analyticsViewURL = "https://guns.lol/api/analytics/view"
-
-// gppFormatVersion is the constant "_c14f" value in the analytics payload.
-// It is 2 in every observed request and page (RSC) payload; its exact meaning
-// (schema/format version) is unconfirmed but it does not vary per request.
-const gppFormatVersion = 2
-
-// gppChallenge is the "_gpp_ch" object of the /api/analytics/view payload. The
-// server expects these obfuscated, build-stable key names; Go marshals struct
-// fields in declaration order, matching the observed request field order.
-type gppChallenge struct {
-	Version   int    `json:"_c14f"`
-	Timestamp int64  `json:"_e92a"`
-	O09       string `json:"_b73d"`
-	Nonce     string `json:"_a18c"`
-	Salt      string `json:"_f52b"` // _2xa (public salt) from the profile page
-	Oo        string `json:"_7bc1"` // _oo produced by the WASM solver
-}
-
-// recordBody is the full JSON body POSTed to /api/analytics/view.
-type recordBody struct {
-	Turnstile  string       `json:"_t"`
-	GppCh      gppChallenge `json:"_gpp_ch"`
-	Username   string       `json:"username"`
-	DeviceType string       `json:"deviceType"`
-	Referrer   string       `json:"referrer"`
-}
 
 func SubmitLinkClick(username, linkID string) error {
 	p := map[string]interface{}{
@@ -92,49 +74,64 @@ func SubmitLinkClick(username, linkID string) error {
 	return nil
 }
 
-func SubmitSolution(payload SolutionPayload) error {
-	body := recordBody{
-		Turnstile: payload.TurnstileResponse,
-		GppCh: gppChallenge{
-			Version:   gppFormatVersion,
-			Timestamp: payload.Timestamp,
-			O09:       payload.O09,
-			Nonce:     payload.Nonce,
-			Salt:      payload.Underscore2xa,
-			Oo:        payload.Oo,
-		},
-		Username:   payload.Username,
-		DeviceType: "desktop", //[]string{"desktop", "mobile"}[rand.Intn(2)],
-		Referrer:   "",        //https://miwa.lol/tenshii", //"https://guns.lol/" + payload.Username,
+// buildViewPayload marshals the positional array guns.lol's rewritten view
+// beacon expects:
+//
+//	[token, [v, e, t, n, s, c, proof], username, deviceNum, referrer]
+func buildViewPayload(p SolutionPayload) ([]byte, error) {
+	challenge := []any{p.Version, p.ID, p.Timestamp, p.Nonce, p.Seal, p.Challenge, p.Proof}
+	return json.Marshal([]any{p.Token, challenge, p.Username, p.DeviceNum, p.Referrer})
+}
+
+func SubmitSolution(ctx context.Context, p SolutionPayload, capmonsterKey string) error {
+	jsonPayload, err := buildViewPayload(p)
+	if err != nil {
+		return err
 	}
-	jsonPayload, err := json.Marshal(body)
+
+	status, respBody, err := postAnalyticsView(jsonPayload, p.Username)
 	if err != nil {
 		return err
 	}
 
 	// Cloudflare gates this endpoint by client fingerprint: a raw Go client is
-	// challenged (403) while a real browser passes. When a FlareSolverr endpoint
-	// is configured, POST the payload through its browser instead of directly.
-	if flaresolverrEndpoint != "" {
-		status, respText, err := SubmitViaFlareSolverr(flaresolverrEndpoint, analyticsViewURL, string(jsonPayload), proxyURL)
+	// answered with a 403 challenge unless it presents a valid cf_clearance
+	// cookie. Mint one with CapMonster from the interstitial we just got, store
+	// it, and retry the POST once.
+	if status == http.StatusForbidden {
+		fmt.Println("Cloudflare challenge on submit, minting cf_clearance via CapMonster...")
+		cookie, err := SolveCfClearance(ctx, capmonsterKey, "https://guns.lol/"+p.Username, respBody, proxyURL)
 		if err != nil {
-			return fmt.Errorf("submit via flaresolverr: %w", err)
+			return fmt.Errorf("mint cf_clearance: %w", err)
 		}
-		if status != http.StatusOK {
-			return fmt.Errorf("submit via flaresolverr returned origin status %d: %s", status, truncate(respText, 300))
+		cfClearance = cookie
+		saveCfClearance()
+
+		status, respBody, err = postAnalyticsView(jsonPayload, p.Username)
+		if err != nil {
+			return err
 		}
-		return nil
 	}
 
+	if status != http.StatusOK {
+		return fmt.Errorf("failed to submit solution, status: %d, body: %s", status, truncate(string(respBody), 300))
+	}
+	return nil
+}
+
+// postAnalyticsView sends the view payload to the analytics endpoint with the
+// browser-like headers and clearance cookies, returning the origin status and
+// response body. Any cf_clearance the response sets is captured for reuse.
+func postAnalyticsView(jsonPayload []byte, username string) (int, []byte, error) {
 	req, err := http.NewRequest("POST", analyticsViewURL, bytes.NewReader(jsonPayload))
 	if err != nil {
-		return err
+		return 0, nil, err
 	}
-	req.Header.Set("Content-Type", "text/plain;charset=UTF-8")
+	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Cache-Control", "no-store")
 	req.Header.Set("User-Agent", userAgent)
 	req.Header.Set("Origin", "https://guns.lol")
-	req.Header.Set("Referer", "https://guns.lol/"+payload.Username)
+	req.Header.Set("Referer", "https://guns.lol/"+username)
 	req.Header.Set("Accept", "*/*")
 	req.Header.Set("Accept-Language", "en-US,en;q=0.9")
 	req.Header.Set("sec-ch-ua", `"Chromium";v="146", "Google Chrome";v="146", "Not.A/Brand";v="99"`)
@@ -150,15 +147,11 @@ func SubmitSolution(payload SolutionPayload) error {
 
 	resp, err := httpClient.Do(req)
 	if err != nil {
-		return err
+		return 0, nil, err
 	}
 	defer resp.Body.Close()
 	captureCfClearance(resp)
 
 	respBody, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("failed to submit solution, status: %d, body: %s", resp.StatusCode, string(respBody))
-	}
-
-	return nil
+	return resp.StatusCode, respBody, nil
 }

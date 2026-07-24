@@ -50,12 +50,12 @@ type capmonsterResultResponse struct {
 	} `json:"solution"`
 }
 
-func SolveTurnstile(ctx context.Context, apiKey, pageURL, cData string) (string, error) {
+func SolveTurnstile(ctx context.Context, apiKey, pageURL, action, cData string) (string, error) {
 	task := capmonsterTask{
 		Type:       "TurnstileTaskProxyless",
 		WebsiteURL: pageURL,
 		WebsiteKey: turnstileSiteKey,
-		PageAction: "x_7a2",
+		PageAction: action,
 		Data:       cData,
 	}
 

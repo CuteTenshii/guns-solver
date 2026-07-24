@@ -10,10 +10,10 @@ import (
 	"time"
 )
 
-// userAgent is the User-Agent sent on every guns.lol request. It is a var, not
-// a const, because cf_clearance is bound to the UA that solved the Cloudflare
-// challenge: when FlareSolverr returns a clearance it also reports the UA it
-// used, and we overwrite this so the whole flow stays consistent.
+// userAgent is the User-Agent sent on every guns.lol request, and the UA passed
+// to CapMonster when minting a cf_clearance cookie. cf_clearance is bound to the
+// UA that solved the Cloudflare challenge, so the same value must be used
+// everywhere for the whole flow to stay consistent.
 var userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36"
 
 func fatalf(format string, a ...any) {
@@ -23,21 +23,19 @@ func fatalf(format string, a ...any) {
 
 func main() {
 	username := flag.String("username", "", "Profile username")
-	capmonsterKey := flag.String("capmonster-key", "", "CapMonster API key for Turnstile solving")
+	capmonsterKey := flag.String("capmonster-key", "", "CapMonster API key for solving Turnstile and minting cf_clearance")
 	proxy := flag.String("proxy", "", "Proxy URL for guns.lol requests (e.g. http://user:pass@host:port)")
 	linkID := flag.String("link-id", "", "Link UUID to record a click event instead of a profile view")
-	flaresolverr := flag.String("flaresolverr", "", "FlareSolverr endpoint (e.g. http://localhost:8191/v1) to POST the analytics record through a real browser, bypassing Cloudflare's bot check")
 	flag.Parse()
 
-	// Proxy is applied before any request (and used by FlareSolverr) so the whole
-	// flow shares one egress IP.
+	// Proxy is applied before any request (and passed to CapMonster when minting
+	// cf_clearance) so the whole flow shares one egress IP.
 	if *proxy != "" {
 		if err := SetProxy(*proxy); err != nil {
 			fatalf("Invalid proxy URL: %s", err)
 		}
 	}
 	proxyURL = *proxy
-	flaresolverrEndpoint = *flaresolverr
 
 	if *linkID != "" {
 		ctx, cancel := context.WithTimeout(context.Background(), 180*time.Second)
@@ -72,6 +70,12 @@ func main() {
 	}
 	data := *workerData
 
+	fmt.Println("Fetching current PoW module...")
+	powMod, err := FetchPowModule(ctx, data.ID, data.WorkerURL)
+	if err != nil {
+		fatalf("Error fetching PoW module: %s", err)
+	}
+
 	fmt.Println("Solving PoW and Turnstile simultaneously...")
 
 	type wasmResult struct {
@@ -94,7 +98,7 @@ func main() {
 	go func() {
 		defer wg.Done()
 		start := time.Now()
-		res, err := SolveWithWasm(ctx, data.O09, 5, strconv.FormatInt(data.OriginalTimestamp, 10), data.Nonce, data.Underscore2xa)
+		res, err := SolveWithWasm(ctx, powMod, data.Challenge, data.Difficulty, strconv.FormatInt(data.Timestamp, 10), data.Nonce, data.Seal)
 		wasmCh <- wasmResult{res, err, time.Since(start)}
 	}()
 
@@ -102,7 +106,7 @@ func main() {
 	go func() {
 		defer wg.Done()
 		start := time.Now()
-		token, err := SolveTurnstile(ctx, *capmonsterKey, "https://guns.lol/"+*username, data.O09)
+		token, err := SolveTurnstile(ctx, *capmonsterKey, "https://guns.lol/"+*username, data.Action, data.CData)
 		turnstileCh <- turnstileResult{token, err, time.Since(start)}
 	}()
 
@@ -112,7 +116,7 @@ func main() {
 	if wasmR.err != nil {
 		fatalf("Error solving PoW: %s", wasmR.err)
 	}
-	fmt.Printf("PoW solved in %s! _oo=%s seal=%s\n", wasmR.duration.Round(time.Millisecond), wasmR.res.Oo, wasmR.res.Seal)
+	fmt.Printf("PoW solved in %s! proof=%s\n", wasmR.duration.Round(time.Millisecond), wasmR.res.Oo)
 
 	tR := <-turnstileCh
 	if tR.err != nil {
@@ -120,16 +124,19 @@ func main() {
 	}
 	fmt.Printf("Turnstile solved in %s!\n", tR.duration.Round(time.Millisecond))
 
-	err = SubmitSolution(SolutionPayload{
-		Username:          *username,
-		Nonce:             data.Nonce,
-		O09:               data.O09,
-		Timestamp:         data.OriginalTimestamp,
-		Underscore2xa:     data.Underscore2xa,
-		Oo:                wasmR.res.Oo,
-		Seal:              wasmR.res.Seal,
-		TurnstileResponse: tR.token,
-	})
+	err = SubmitSolution(ctx, SolutionPayload{
+		Username:  *username,
+		Version:   data.Version,
+		ID:        data.ID,
+		Timestamp: data.Timestamp,
+		Nonce:     data.Nonce,
+		Seal:      data.Seal,
+		Challenge: data.Challenge,
+		Proof:     wasmR.res.Oo,
+		Token:     tR.token,
+		Referrer:  "",
+		DeviceNum: 0,
+	}, *capmonsterKey)
 	if err != nil {
 		fatalf("Error submitting solution: %s", err)
 	}
