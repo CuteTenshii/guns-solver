@@ -2,8 +2,28 @@ package main
 
 import (
 	"context"
+	"strings"
 	"testing"
 )
+
+// TestResolveProxySession checks the {session} placeholder is replaced with a
+// fresh token each call, and that URLs without it are left untouched.
+func TestResolveProxySession(t *testing.T) {
+	const tmpl = "http://user:pass_session-{session}_lifetime-30s@geo.iproyal.com:12345"
+	a := resolveProxySession(tmpl)
+	b := resolveProxySession(tmpl)
+	if strings.Contains(a, proxySessionPlaceholder) {
+		t.Fatalf("placeholder not substituted: %q", a)
+	}
+	if a == b {
+		t.Fatal("expected a distinct session token per call")
+	}
+
+	const plain = "http://user:pass@host:1234"
+	if got := resolveProxySession(plain); got != plain {
+		t.Fatalf("proxy without placeholder was altered: %q", got)
+	}
+}
 
 // TestSolveWithWasmKnownSample validates the wazero ABI against the embedded
 // clearance binary with a captured known-answer sample: the same inputs must

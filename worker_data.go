@@ -3,6 +3,8 @@ package main
 import (
 	"bytes"
 	"context"
+	crand "crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -96,15 +98,47 @@ var (
 	challengeSRegex     = regexp.MustCompile(`[{,]__s:"([^"]+)"`)
 )
 
+// proxySessionPlaceholder, when present in the proxy URL, is replaced with a
+// fresh random token each run. Sticky-session proxy providers key the session
+// (and thus the exit IP) off the credentials — e.g. IPRoyal's
+// `password_session-<id>_lifetime-30s` — so substituting a new token per
+// execution hands out a new IP, which is what botting views requires.
+const proxySessionPlaceholder = "{session}"
+
+// SetProxy routes every request (and CapMonster's egress, via proxyURL) through
+// rawURL. A {session} placeholder is resolved once here so the tool and
+// CapMonster share the same sticky session for the whole run.
 func SetProxy(rawURL string) error {
-	proxyURL, err := url.Parse(rawURL)
+	resolved := resolveProxySession(rawURL)
+	u, err := url.Parse(resolved)
 	if err != nil {
 		return err
 	}
 	httpClient.Transport = &http.Transport{
-		Proxy: http.ProxyURL(proxyURL),
+		Proxy: http.ProxyURL(u),
 	}
+	proxyURL = resolved
 	return nil
+}
+
+// resolveProxySession replaces every proxySessionPlaceholder in rawURL with one
+// freshly generated session token, leaving URLs without the placeholder
+// unchanged.
+func resolveProxySession(rawURL string) string {
+	if !strings.Contains(rawURL, proxySessionPlaceholder) {
+		return rawURL
+	}
+	return strings.ReplaceAll(rawURL, proxySessionPlaceholder, randomSessionID())
+}
+
+// randomSessionID returns a 16-hex-character token for use as a proxy session
+// id.
+func randomSessionID() string {
+	b := make([]byte, 8)
+	if _, err := crand.Read(b); err != nil {
+		panic(fmt.Sprintf("generate proxy session id: %v", err))
+	}
+	return hex.EncodeToString(b)
 }
 
 // WorkerData is the guns.lol proof-of-work challenge scraped from a profile

@@ -24,18 +24,18 @@ func fatalf(format string, a ...any) {
 func main() {
 	username := flag.String("username", "", "Profile username")
 	capmonsterKey := flag.String("capmonster-key", "", "CapMonster API key for solving Turnstile and minting cf_clearance")
-	proxy := flag.String("proxy", "", "Proxy URL for guns.lol requests (e.g. http://user:pass@host:port)")
+	proxy := flag.String("proxy", "", "Proxy URL for guns.lol requests (e.g. http://user:pass@host:port). A {session} placeholder is replaced with a random token each run for rotating sticky-session proxies")
 	linkID := flag.String("link-id", "", "Link UUID to record a click event instead of a profile view")
 	flag.Parse()
 
 	// Proxy is applied before any request (and passed to CapMonster when minting
-	// cf_clearance) so the whole flow shares one egress IP.
+	// cf_clearance) so the whole flow shares one egress IP. SetProxy also
+	// resolves any {session} placeholder and records the result in proxyURL.
 	if *proxy != "" {
 		if err := SetProxy(*proxy); err != nil {
 			fatalf("Invalid proxy URL: %s", err)
 		}
 	}
-	proxyURL = *proxy
 
 	if *linkID != "" {
 		ctx, cancel := context.WithTimeout(context.Background(), 180*time.Second)

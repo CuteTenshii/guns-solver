@@ -28,7 +28,7 @@ Usage of ./guns-solver.exe:
   -link-id string
         Link UUID to record a click event instead of a profile view
   -proxy string
-        Proxy URL for guns.lol requests (e.g. http://user:pass@host:port)
+        Proxy URL for guns.lol requests (e.g. http://user:pass@host:port). A {session} placeholder is replaced with a random token each run for rotating sticky-session proxies
   -username string
         Profile username
 ```
@@ -58,6 +58,16 @@ When the tool hits that challenge, it hands the interstitial to CapMonster's Clo
 ## Botting your views
 
 **Note:** You NEED proxies with a randomized IP for this to work. This is NOT optional since I estimate they rate limit user views to **1 view/per ip/per day**.
+
+### Rotating proxies (sticky sessions)
+
+If your proxy provider supports **sticky sessions** (a session id in the credentials that pins one exit IP), put a `{session}` placeholder where that id goes. Each run replaces it with a fresh random token, so every execution gets a new IP — exactly what you want when firing off many in parallel.
+
+For example, with [IPRoyal](https://iproyal.com):
+```
+-proxy "http://username:password_session-{session}_lifetime-30s@geo.iproyal.com:12345"
+```
+Without the placeholder the proxy URL is used as-is (all runs share one IP), so make sure to add it for botting.
 
 Personally I got banned after multiple days **BUT** I've seen people I botted not getting banned after multiple weeks. Their staff is lazy asf
 
