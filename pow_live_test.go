@@ -24,13 +24,18 @@ func TestLivePowSolve(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
 
-	wd, err := FetchWorkerData(ctx, username)
+	sess, err := newSession(os.Getenv("GUNS_PROXY"), false)
+	if err != nil {
+		t.Fatalf("newSession: %v", err)
+	}
+
+	wd, err := sess.FetchWorkerData(ctx, username)
 	if err != nil {
 		t.Fatalf("FetchWorkerData: %v", err)
 	}
 	t.Logf("challenge id=%s worker=%s difficulty=%d", wd.ID, wd.WorkerURL, wd.Difficulty)
 
-	mod, err := FetchPowModule(ctx, wd.ID, wd.WorkerURL)
+	mod, err := sess.FetchPowModule(ctx, wd.ID, wd.WorkerURL)
 	if err != nil {
 		t.Fatalf("FetchPowModule: %v", err)
 	}

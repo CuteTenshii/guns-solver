@@ -5,7 +5,7 @@
 A solver for the guns.lol WebAssembly script, which is used to record views on profile pages.
 Made it because I was bored and wanted to see how it worked.
 
-This only sends one request per program execution. If you want to bot your profile views then scroll down.
+By default it records one view per run. To record many at once — each on its own IP — use the built-in `-count`/`-concurrency` flags; scroll down to [Botting your views](#botting-your-views).
 
 For an alternative to guns.lol, check out [Miwa.lol](https://miwa.lol)! It's better than them :)
 
@@ -25,10 +25,14 @@ For an alternative to guns.lol, check out [Miwa.lol](https://miwa.lol)! It's bet
 Usage of ./guns-solver.exe:
   -capmonster-key string
         CapMonster API key for solving Turnstile and minting cf_clearance
+  -concurrency int
+        Maximum views to record simultaneously (default: min(count, 5))
+  -count int
+        Number of profile views to record (default 1)
   -link-id string
         Link UUID to record a click event instead of a profile view
   -proxy string
-        Proxy URL for guns.lol requests (e.g. http://user:pass@host:port). A {session} placeholder is replaced with a random token each run for rotating sticky-session proxies
+        Proxy URL for guns.lol requests (e.g. http://user:pass@host:port). A {session} placeholder is replaced with a fresh token per worker for rotating sticky-session proxies
   -username string
         Profile username
 ```
@@ -40,6 +44,11 @@ On Linux and macOS, the `.exe` extension is not present so remove it.
 To add a view to a user:
 ```shell
 ./guns-solver.exe -username <username> -capmonster-key ... -proxy ...
+```
+
+To add many views at once (50 total, 8 in flight, each on its own IP):
+```shell
+./guns-solver.exe -username <username> -capmonster-key ... -count 50 -concurrency 8 -proxy "http://user:pass_session-{session}@host:port"
 ```
 
 To add a link click:
@@ -61,22 +70,20 @@ When the tool hits that challenge, it hands the interstitial to CapMonster's Clo
 
 ### Rotating proxies (sticky sessions)
 
-If your proxy provider supports **sticky sessions** (a session id in the credentials that pins one exit IP), put a `{session}` placeholder where that id goes. Each run replaces it with a fresh random token, so every execution gets a new IP — exactly what you want when firing off many in parallel.
+If your proxy provider supports **sticky sessions** (a session id in the credentials that pins one exit IP), put a `{session}` placeholder where that id goes. Every worker replaces it with a fresh random token, so each view gets a new IP — exactly what you want when firing off many at once.
 
 For example, with [IPRoyal](https://iproyal.com):
 ```
 -proxy "http://username:password_session-{session}_lifetime-30s@geo.iproyal.com:12345"
 ```
-Without the placeholder the proxy URL is used as-is (all runs share one IP), so make sure to add it for botting.
+Without the placeholder the proxy URL is used as-is (all views share one IP), so make sure to add it for botting — the tool warns you if it's missing.
 
 Personally I got banned after multiple days **BUT** I've seen people I botted not getting banned after multiple weeks. Their staff is lazy asf
 
-**On Windows:** use this in PowerShell (replace 100 by the number of views you want to add):
-```shell
-1..100 | ForEach-Object -Parallel { Start-Process "guns-solver.exe" -ArgumentList "-username ....." } -ThrottleLimit 100
-```
+### Firing off many views
 
-**On Linux/macOS:** you can use GNU Parallel (100 is the number of repetitions, 40 is the number of parallel processes):
+This is built in — no shell loops or GNU Parallel needed. Use `-count` for how many views to record and `-concurrency` for how many run at the same time:
 ```shell
-seq 100 | parallel -j40 ./guns-solver -username .....
+./guns-solver -username <username> -capmonster-key ... -count 100 -concurrency 40 -proxy "http://user:pass_session-{session}@host:port"
 ```
+Each view runs on its own proxy session (its own IP and `cf_clearance`), so the counts are what you'd expect. A live progress board shows each worker; when the output is piped/redirected it falls back to one line per completed view. Press `Ctrl-C` to stop early — it reports what already completed.

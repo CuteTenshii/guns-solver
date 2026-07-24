@@ -7,7 +7,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ```bash
 go build          # build the binary
 go run .          # run without building
-./guns-solver -username <username> -capmonster-key <key>   # run the solver
+./guns-solver -username <username> -capmonster-key <key>   # record one view
+./guns-solver -username <username> -capmonster-key <key> -count 50 -concurrency 8 -proxy 'http://user:pass_session-{session}@host:port'   # record many views in parallel, each on its own IP
 go vet ./...      # lint
 go test ./...     # run tests (includes a ~3s known-answer WASM solve)
 ```
@@ -20,13 +21,16 @@ This is a Go reverse-engineering tool that automates the proof-of-work challenge
 
 ### Files
 
-- **`main.go`** — Entry point. Parses flags (`-username`, `-capmonster-key`, `-proxy`, `-link-id`), fetches the challenge, solves the PoW and Turnstile concurrently, then submits. `userAgent` is shared across every request (cf_clearance is bound to it).
-- **`worker_data.go`** — `FetchWorkerData(username)` fetches the profile page and `parseGppChallenge` extracts the `_gpp_ch` object out of the Next.js flight payload (it lives inside a JS string literal, so the captured JSON is un-escaped before `json.Unmarshal`). Also holds the clearance-cookie plumbing and the `guns_clearance` 401 interstitial flow (`solveChallenge`), a **separate** subsystem that uses the `_gs_sets` format and the embedded clearance binary.
-- **`pow_module.go`** — `FetchPowModule(id, workerPath)` resolves the current view-PoW module for a challenge. The worker, glue, and binary all live under `/_challenge/pow/<id>/`; `fetchPowModule` fetches the worker, XOR-decodes the glue import name, parses the glue for the wasm URL and the rotated constructor/solve export symbols, and fetches the binary, returning a `powModule{wasm, ctorExport, solveExport}`. Results are cached to disk keyed by challenge id (`powCacheRoot`, under the temp dir) — the module is immutable under a given id and the id only changes on rotation, so a cache hit is always current and skips all three round-trips.
+- **`main.go`** — Entry point. Parses flags (`-username`, `-capmonster-key`, `-proxy`, `-link-id`, `-count`, `-concurrency`), then dispatches: `runLinkClick` (link event), `runSingle` (one view, animated per-step spinners), or `runParallel` (`-count` > 1, live board). `userAgent` is shared across every request (cf_clearance is bound to it).
+- **`session.go`** — `session` is the per-worker request state (own `http.Client`, resolved proxy, `guns_clearance`/`cf_clearance` cookies). `newSession(rawProxy, persist)` resolves a `{session}` proxy token to a fresh value so each session egresses through a distinct IP; `persist` mirrors the clearance cookies to disk (single-run only — IP-bound cookies must not leak across parallel workers). Holds the cookie plumbing (`addClearanceCookies`, `captureCfClearance`, `save*`) and `infof`/`warnf`, which route through `onLog` (the board) in parallel mode. A session is single-goroutine, so it needs no locking.
+- **`worker_data.go`** — `(*session).FetchWorkerData(username)` fetches the profile page and `parseGppChallenge` extracts the `_gpp_ch` object out of the Next.js flight payload (it lives inside a JS string literal, so the captured JSON is un-escaped before `json.Unmarshal`). Also holds the `guns_clearance` 401 interstitial flow (`solveChallenge`), a **separate** subsystem that uses the `_gs_sets` format and the embedded clearance binary, plus `resolveProxySession`/`randomSessionID`.
+- **`run.go`** — `(*session).runView(cfg, reporter)` is the single record-a-view pipeline used by both single and parallel modes: fetch challenge → fetch PoW module → `solvePowAndTurnstile` (concurrent) → submit. The `reporter` interface has two impls: `spinnerReporter` (single-run animated steps) and `rowReporter` (parallel board row).
+- **`board.go`** — `board` is the live multi-slot progress display for parallel mode: one animated row per worker slot + a running summary, with a persistent `✓`/`✗` line emitted *above* the live region per finished view. Falls back to one plain line per completion when color is disabled (piped output), which is what fixed the "external `parallel` strips styling" problem. All mutating methods take `b.mu`; `render`/`logLine` assume it is held.
+- **`pow_module.go`** — `(*session).FetchPowModule(id, workerPath)` resolves the current view-PoW module for a challenge. The worker, glue, and binary all live under `/_challenge/pow/<id>/`; `fetchPowModule` fetches the worker, XOR-decodes the glue import name, parses the glue for the wasm URL and the rotated constructor/solve export symbols, and fetches the binary, returning a `powModule{wasm, ctorExport, solveExport}`. Results are cached to disk keyed by challenge id (`powCacheRoot`, under the temp dir) — the module is immutable under a given id and the id only changes on rotation, so a cache hit is always current and skips all three round-trips. Temp files use a random suffix so concurrent workers caching the same rotation don't clobber each other.
 - **`wasm.go`** — `SolveWithWasm(m *powModule, ...)` runs a given PoW module via wazero, reimplementing the wasm-bindgen JS glue (a JS heap with free-list, the host imports, string passing). The constructor ABI is `(challenge, difficulty, orgTs, nonce, seal) -> ptr`; the solve method writes 3×i32 to a return slot and yields a result object whose `_oo` field is the proof. `clearancePowModule()` wraps the **embedded** stable clearance binary (`assets/gpp_gunslol_bg.wasm`, exports `gunssolver_new`/`gunssolver_solve_pow`) as a `powModule`.
 - **`turnstile.go`** — `SolveTurnstile` solves the Cloudflare Turnstile (sitekey `0x4AAAAAAAgU7T2niLQD-TLm`) via CapMonster, using the challenge's `action` and `cd` values.
 - **`cf_clearance.go`** — `SolveCfClearance` mints a `cf_clearance` cookie via CapMonster when the analytics endpoint answers with a 403 Managed Challenge.
-- **`submit.go`** — `SubmitSolution` builds the positional-array body and POSTs it to `/api/analytics/view`, minting cf_clearance and retrying once on 403. `SubmitLinkClick` still targets the older `/api/analytics/record` labeled-object endpoint.
+- **`submit.go`** — `(*session).SubmitSolution` builds the positional-array body and POSTs it to `/api/analytics/view`, minting cf_clearance (bound to the session's `proxyURL`) and retrying once on 403. `(*session).SubmitLinkClick` still targets the older `/api/analytics/record` labeled-object endpoint.
 - **`ui.go`** — Dependency-free terminal styling for the CLI: ANSI helpers (`bold`/`dim`/`cyan`/…) gated by `colorEnabled` (auto-disabled on non-TTY stdout, `NO_COLOR`, or `TERM=dumb`), a braille `spinner` for per-step progress that resolves to `✓`/`✗`, and `banner`/`infoln`/`warnln`/`doneln` line helpers. `fatalf` tears down the `activeSpinner` before printing an error; `infoln`/`warnln` clear a running spinner's frame so subsystem logs print above it without corrupting the animation. In non-TTY mode the spinner degrades to a static `→` line.
 - **`assets/`** — `gpp_gunslol_bg.wasm`, the embedded clearance binary (exports `gunssolver_new`; used only by `clearancePowModule()`). `gpp_gunslol_bg_old.wasm` is a retained older variant, unreferenced by code. The rotating view-PoW binaries are not stored here — they are fetched and cached under the temp dir.
 
@@ -65,11 +69,15 @@ The challenge object on the profile page uses single-letter keys (`WorkerData` e
 
 `deviceNum` is a numeric enum: desktop=0, mobile=1, tablet=2. `proof` is the solver's `_oo`.
 
+### Parallel view recording
+
+`-count N` records N views; `-concurrency K` (default `min(count, 5)`) caps how many run at once. `runParallel` fans out K worker goroutines that pull view indices off an atomic counter until `count` is exhausted. **Each view runs on its own `newSession`**, so a `{session}` proxy resolves to a fresh token — a distinct exit IP and a distinct `cf_clearance` — per view; without a `{session}` proxy the workers share one IP and the tool warns that the views will likely de-dupe. The whole point is that this is built in: it replaces piping the binary through GNU `parallel`, which stripped the TTY and killed the styling. Ctrl-C (`signal.NotifyContext`) stops claiming new views and reports what completed. `-link-id` and `-count`/`-concurrency` are independent — a link click is always a single request.
+
 ### Testing
 
 - `go test ./...` runs offline unit tests: `TestSolveWithWasmKnownSample` (known-answer against the embedded clearance binary), `TestParseGlue`/`TestDecodeGlueImport` (the runtime glue/worker parsing), `TestPowModuleCache` (the disk cache round-trip and path-safety), `TestParseGppChallenge`, and `TestBuildViewPayloadShape`.
 - `GUNS_LIVE=1 [GUNS_USER=<name>] go test -run TestLivePowSolve` runs the network-gated integration test: fetch the current module and solve the current challenge. This is the regression test for the rotation 1003 bug.
 
-### Known unknowns
+### Status
 
-- The live fetch-and-solve path is verified (no 1003), but a full end-to-end **submit** to `/api/analytics/view` (real CapMonster key + cf_clearance) accepting the proof has not been confirmed against the origin.
+- The full end-to-end flow is confirmed working against the origin: `/api/analytics/view` accepts the proof with a real CapMonster key + cf_clearance, in both single and parallel (`-count`/`-concurrency`) modes.

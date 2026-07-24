@@ -41,7 +41,7 @@ func truncate(s string, n int) string {
 // client without a valid cf_clearance cookie is answered with a 403 challenge.
 const analyticsViewURL = "https://guns.lol/api/analytics/view"
 
-func SubmitLinkClick(username, linkID string) error {
+func (s *session) SubmitLinkClick(username, linkID string) error {
 	p := map[string]interface{}{
 		"username":   username,
 		"event":      "click",
@@ -60,13 +60,13 @@ func SubmitLinkClick(username, linkID string) error {
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("User-Agent", userAgent)
-	addClearanceCookies(req)
-	resp, err := httpClient.Do(req)
+	s.addClearanceCookies(req)
+	resp, err := s.client.Do(req)
 	if err != nil {
 		return err
 	}
 	defer resp.Body.Close()
-	captureCfClearance(resp)
+	s.captureCfClearance(resp)
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
 		return fmt.Errorf("failed to submit link click, status: %d, body: %s", resp.StatusCode, string(body))
@@ -83,13 +83,13 @@ func buildViewPayload(p SolutionPayload) ([]byte, error) {
 	return json.Marshal([]any{p.Token, challenge, p.Username, p.DeviceNum, p.Referrer})
 }
 
-func SubmitSolution(ctx context.Context, p SolutionPayload, capmonsterKey string) error {
+func (s *session) SubmitSolution(ctx context.Context, p SolutionPayload, capmonsterKey string) error {
 	jsonPayload, err := buildViewPayload(p)
 	if err != nil {
 		return err
 	}
 
-	status, respBody, err := postAnalyticsView(jsonPayload, p.Username)
+	status, respBody, err := s.postAnalyticsView(jsonPayload, p.Username)
 	if err != nil {
 		return err
 	}
@@ -99,15 +99,15 @@ func SubmitSolution(ctx context.Context, p SolutionPayload, capmonsterKey string
 	// cookie. Mint one with CapMonster from the interstitial we just got, store
 	// it, and retry the POST once.
 	if status == http.StatusForbidden {
-		warnln("Cloudflare 403 on submit — minting cf_clearance via CapMonster")
-		cookie, err := SolveCfClearance(ctx, capmonsterKey, "https://guns.lol/"+p.Username, respBody, proxyURL)
+		s.warnf("Cloudflare 403 on submit — minting cf_clearance via CapMonster")
+		cookie, err := SolveCfClearance(ctx, capmonsterKey, "https://guns.lol/"+p.Username, respBody, s.proxyURL)
 		if err != nil {
 			return fmt.Errorf("mint cf_clearance: %w", err)
 		}
-		cfClearance = cookie
-		saveCfClearance()
+		s.cfClearance = cookie
+		s.saveCfClearance()
 
-		status, respBody, err = postAnalyticsView(jsonPayload, p.Username)
+		status, respBody, err = s.postAnalyticsView(jsonPayload, p.Username)
 		if err != nil {
 			return err
 		}
@@ -122,7 +122,7 @@ func SubmitSolution(ctx context.Context, p SolutionPayload, capmonsterKey string
 // postAnalyticsView sends the view payload to the analytics endpoint with the
 // browser-like headers and clearance cookies, returning the origin status and
 // response body. Any cf_clearance the response sets is captured for reuse.
-func postAnalyticsView(jsonPayload []byte, username string) (int, []byte, error) {
+func (s *session) postAnalyticsView(jsonPayload []byte, username string) (int, []byte, error) {
 	req, err := http.NewRequest("POST", analyticsViewURL, bytes.NewReader(jsonPayload))
 	if err != nil {
 		return 0, nil, err
@@ -143,14 +143,14 @@ func postAnalyticsView(jsonPayload []byte, username string) (int, []byte, error)
 
 	req.AddCookie(&http.Cookie{Name: "GUNS_LOCALE", Value: "en"})
 	req.AddCookie(&http.Cookie{Name: "GUNS_PATH_LOCALE", Value: "en"})
-	addClearanceCookies(req)
+	s.addClearanceCookies(req)
 
-	resp, err := httpClient.Do(req)
+	resp, err := s.client.Do(req)
 	if err != nil {
 		return 0, nil, err
 	}
 	defer resp.Body.Close()
-	captureCfClearance(resp)
+	s.captureCfClearance(resp)
 
 	respBody, _ := io.ReadAll(resp.Body)
 	return resp.StatusCode, respBody, nil

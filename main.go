@@ -5,8 +5,10 @@ import (
 	"flag"
 	"fmt"
 	"os"
-	"strconv"
+	"os/signal"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -15,6 +17,14 @@ import (
 // UA that solved the Cloudflare challenge, so the same value must be used
 // everywhere for the whole flow to stay consistent.
 var userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36"
+
+// perViewTimeout bounds a single record-a-view attempt (challenge fetch through
+// submission, including the CapMonster round-trips).
+const perViewTimeout = 180 * time.Second
+
+// defaultConcurrency caps how many views run at once when -concurrency is not
+// given, so a large -count does not open an unbounded number of proxy sessions.
+const defaultConcurrency = 5
 
 func fatalf(format string, a ...any) {
 	if activeSpinner != nil {
@@ -27,37 +37,16 @@ func fatalf(format string, a ...any) {
 func main() {
 	username := flag.String("username", "", "Profile username")
 	capmonsterKey := flag.String("capmonster-key", "", "CapMonster API key for solving Turnstile and minting cf_clearance")
-	proxy := flag.String("proxy", "", "Proxy URL for guns.lol requests (e.g. http://user:pass@host:port). A {session} placeholder is replaced with a random token each run for rotating sticky-session proxies")
+	proxy := flag.String("proxy", "", "Proxy URL for guns.lol requests (e.g. http://user:pass@host:port). A {session} placeholder is replaced with a fresh token per worker for rotating sticky-session proxies")
 	linkID := flag.String("link-id", "", "Link UUID to record a click event instead of a profile view")
+	count := flag.Int("count", 1, "Number of profile views to record")
+	concurrency := flag.Int("concurrency", 0, "Maximum views to record simultaneously (default: min(count, 5))")
 	flag.Parse()
-
-	// Proxy is applied before any request (and passed to CapMonster when minting
-	// cf_clearance) so the whole flow shares one egress IP. SetProxy also
-	// resolves any {session} placeholder and records the result in proxyURL.
-	if *proxy != "" {
-		if err := SetProxy(*proxy); err != nil {
-			fatalf("Invalid proxy URL: %s", err)
-		}
-	}
 
 	banner()
 
 	if *linkID != "" {
-		ctx, cancel := context.WithTimeout(context.Background(), 180*time.Second)
-		defer cancel()
-		sp := startSpinner("Acquiring Cloudflare clearance")
-		if _, err := FetchWorkerData(ctx, *username); err != nil {
-			fatalf("Error acquiring Cloudflare clearance: %s", err)
-		}
-		sp.succeed("Acquired Cloudflare clearance")
-
-		sp = startSpinner("Submitting link click")
-		if err := SubmitLinkClick(*username, *linkID); err != nil {
-			fatalf("Error submitting link click: %s", err)
-		}
-		sp.succeed("Submitted link click")
-
-		doneln("Link click recorded for %s", cyan(*linkID))
+		runLinkClick(*username, *linkID, *proxy)
 		return
 	}
 
@@ -67,96 +56,131 @@ func main() {
 	if *capmonsterKey == "" {
 		fatalf("Missing required flag %s (needed to solve Cloudflare Turnstile)", bold("-capmonster-key"))
 	}
+	if *count < 1 {
+		fatalf("Invalid -count %d: must be at least 1", *count)
+	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 180*time.Second)
+	conc := *concurrency
+	if conc < 1 {
+		conc = defaultConcurrency
+	}
+	if conc > *count {
+		conc = *count
+	}
+
+	cfg := viewConfig{Username: *username, CapmonsterKey: *capmonsterKey, DeviceNum: 0, Referrer: ""}
+
+	if *count == 1 {
+		runSingle(cfg, *proxy)
+		return
+	}
+	runParallel(cfg, *proxy, *count, conc)
+}
+
+// runLinkClick records a single link-click event.
+func runLinkClick(username, linkID, proxy string) {
+	if username == "" {
+		fatalf("Missing required flag %s (needed to record a link click)", bold("-username"))
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), perViewTimeout)
 	defer cancel()
 
-	infoln("target %s", cyan("guns.lol/"+*username))
-
-	sp := startSpinner("Fetching worker data")
-	workerData, err := FetchWorkerData(ctx, *username)
+	sess, err := newSession(proxy, true)
 	if err != nil {
-		fatalf("Error fetching worker data: %s", err)
+		fatalf("Invalid proxy URL: %s", err)
 	}
-	if workerData == nil {
-		fatalf("Error fetching worker data: no data returned")
-	}
-	data := *workerData
-	sp.succeedDetail("Fetched worker data", fmt.Sprintf("difficulty %d · challenge %s", data.Difficulty, data.ID))
 
-	sp = startSpinner("Fetching current PoW module")
-	powMod, err := FetchPowModule(ctx, data.ID, data.WorkerURL)
+	sp := startSpinner("Acquiring Cloudflare clearance")
+	if _, err := sess.FetchWorkerData(ctx, username); err != nil {
+		fatalf("Error acquiring Cloudflare clearance: %s", err)
+	}
+	sp.succeed("Acquired Cloudflare clearance")
+
+	sp = startSpinner("Submitting link click")
+	if err := sess.SubmitLinkClick(username, linkID); err != nil {
+		fatalf("Error submitting link click: %s", err)
+	}
+	sp.succeed("Submitted link click")
+
+	doneln("Link click recorded for %s", cyan(linkID))
+}
+
+// runSingle records one view with the animated per-step display.
+func runSingle(cfg viewConfig, proxy string) {
+	ctx, cancel := context.WithTimeout(context.Background(), perViewTimeout)
+	defer cancel()
+
+	sess, err := newSession(proxy, true)
 	if err != nil {
-		fatalf("Error fetching PoW module: %s", err)
-	}
-	sp.succeed("Fetched current PoW module")
-
-	sp = startSpinner("Solving PoW and Turnstile")
-
-	type wasmResult struct {
-		res      *WasmResult
-		err      error
-		duration time.Duration
-	}
-	type turnstileResult struct {
-		token    string
-		err      error
-		duration time.Duration
+		fatalf("Invalid proxy URL: %s", err)
 	}
 
-	wasmCh := make(chan wasmResult, 1)
-	turnstileCh := make(chan turnstileResult, 1)
+	infoln("target %s", cyan("guns.lol/"+cfg.Username))
+	if err := sess.runView(ctx, cfg, &spinnerReporter{}); err != nil {
+		fatalf("%s", err)
+	}
+	doneln("View recorded for %s", cyan("guns.lol/"+cfg.Username))
+}
 
+// runParallel records count views across conc worker slots, each on its own
+// proxy session (and thus its own IP and cf_clearance), rendering a live board.
+func runParallel(cfg viewConfig, proxy string, count, conc int) {
+	if proxy == "" || !strings.Contains(proxy, proxySessionPlaceholder) {
+		warnln("workers will share one egress IP; use a {session} proxy so each view gets a distinct IP")
+	}
+
+	// Ctrl-C cancels in-flight work; workers stop claiming new views and the
+	// board reports what completed.
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer stop()
+
+	b := startBoard(conc, count)
+
+	var next int32
 	var wg sync.WaitGroup
-
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		start := time.Now()
-		res, err := SolveWithWasm(ctx, powMod, data.Challenge, data.Difficulty, strconv.FormatInt(data.Timestamp, 10), data.Nonce, data.Seal)
-		wasmCh <- wasmResult{res, err, time.Since(start)}
-	}()
-
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		start := time.Now()
-		token, err := SolveTurnstile(ctx, *capmonsterKey, "https://guns.lol/"+*username, data.Action, data.CData)
-		turnstileCh <- turnstileResult{token, err, time.Since(start)}
-	}()
-
+	for slot := 0; slot < conc; slot++ {
+		wg.Add(1)
+		go func(slot int) {
+			defer wg.Done()
+			for {
+				if ctx.Err() != nil {
+					return
+				}
+				item := int(atomic.AddInt32(&next, 1))
+				if item > count {
+					return
+				}
+				b.claim(slot, item)
+				start := time.Now()
+				err := recordOneView(ctx, cfg, proxy, b, slot, item)
+				b.finish(slot, item, err, time.Since(start))
+			}
+		}(slot)
+	}
 	wg.Wait()
+	b.stopBoard()
 
-	wasmR := <-wasmCh
-	if wasmR.err != nil {
-		fatalf("Error solving PoW: %s", wasmR.err)
+	done, failed := b.stats()
+	target := cyan("guns.lol/" + cfg.Username)
+	if failed == 0 {
+		doneln("Recorded %d views for %s", done, target)
+		return
 	}
-	tR := <-turnstileCh
-	if tR.err != nil {
-		fatalf("Error solving Turnstile: %s", tR.err)
-	}
-	sp.succeed("Solved PoW and Turnstile")
-	infoln("PoW        %s · proof %s", wasmR.duration.Round(time.Millisecond), truncateMiddle(wasmR.res.Oo, 24))
-	infoln("Turnstile  %s", tR.duration.Round(time.Millisecond))
+	fmt.Printf("\n  %s %s\n\n", yellow(bold("!")),
+		bold(fmt.Sprintf("Recorded %d/%d views for %s — %d failed", done, count, cfg.Username, failed)))
+}
 
-	sp = startSpinner("Submitting solution")
-	err = SubmitSolution(ctx, SolutionPayload{
-		Username:  *username,
-		Version:   data.Version,
-		ID:        data.ID,
-		Timestamp: data.Timestamp,
-		Nonce:     data.Nonce,
-		Seal:      data.Seal,
-		Challenge: data.Challenge,
-		Proof:     wasmR.res.Oo,
-		Token:     tR.token,
-		Referrer:  "",
-		DeviceNum: 0,
-	}, *capmonsterKey)
+// recordOneView runs a single view on a fresh session whose {session} proxy
+// token (if any) resolves to a new IP, routing nested logs to the board.
+func recordOneView(ctx context.Context, cfg viewConfig, proxy string, b *board, slot, item int) error {
+	vctx, cancel := context.WithTimeout(ctx, perViewTimeout)
+	defer cancel()
+
+	sess, err := newSession(proxy, false)
 	if err != nil {
-		fatalf("Error submitting solution: %s", err)
+		return fmt.Errorf("invalid proxy URL: %w", err)
 	}
-	sp.succeed("Submitted solution")
+	sess.onLog = func(level, msg string) { b.log(slot, item, level, msg) }
 
-	doneln("View recorded for %s", cyan("guns.lol/"+*username))
+	return sess.runView(vctx, cfg, &rowReporter{b: b, slot: slot})
 }

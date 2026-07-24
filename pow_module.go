@@ -50,11 +50,11 @@ var (
 // names) is immutable under a given id, and the id only changes when guns.lol
 // rotates the challenge, so a cache hit is always current. On a miss it fetches
 // via fetchPowModule and populates the cache best-effort.
-func FetchPowModule(ctx context.Context, id, workerPath string) (*powModule, error) {
+func (s *session) FetchPowModule(ctx context.Context, id, workerPath string) (*powModule, error) {
 	if m, ok := loadCachedModule(id); ok {
 		return m, nil
 	}
-	m, err := fetchPowModule(ctx, workerPath)
+	m, err := s.fetchPowModule(ctx, workerPath)
 	if err != nil {
 		return nil, err
 	}
@@ -67,14 +67,14 @@ func FetchPowModule(ctx context.Context, id, workerPath string) (*powModule, err
 // binary all live in that directory. It fetches the worker, de-obfuscates the
 // glue module name, parses the glue for the wasm URL and the rotated
 // constructor/solve export symbols, then fetches the binary.
-func fetchPowModule(ctx context.Context, workerPath string) (*powModule, error) {
+func (s *session) fetchPowModule(ctx context.Context, workerPath string) (*powModule, error) {
 	slash := strings.LastIndex(workerPath, "/")
 	if slash < 0 {
 		return nil, fmt.Errorf("invalid worker path %q", workerPath)
 	}
 	baseDir := workerPath[:slash] // /_challenge/pow/<id>
 
-	workerJS, err := powGet(ctx, workerPath)
+	workerJS, err := s.powGet(ctx, workerPath)
 	if err != nil {
 		return nil, fmt.Errorf("fetch worker: %w", err)
 	}
@@ -85,7 +85,7 @@ func fetchPowModule(ctx context.Context, workerPath string) (*powModule, error) 
 	// gluePath is like "./_abc"; resolve it against the challenge directory.
 	glueURL := baseDir + "/" + strings.TrimPrefix(gluePath, "./")
 
-	glueJS, err := powGet(ctx, glueURL)
+	glueJS, err := s.powGet(ctx, glueURL)
 	if err != nil {
 		return nil, fmt.Errorf("fetch glue: %w", err)
 	}
@@ -94,7 +94,7 @@ func fetchPowModule(ctx context.Context, workerPath string) (*powModule, error) 
 		return nil, err
 	}
 
-	wasmBytes, err := powGet(ctx, baseDir+"/"+wasmName)
+	wasmBytes, err := s.powGet(ctx, baseDir+"/"+wasmName)
 	if err != nil {
 		return nil, fmt.Errorf("fetch wasm: %w", err)
 	}
@@ -193,7 +193,9 @@ func storeCachedModule(id string, m *powModule) {
 		return
 	}
 	wasmPath := filepath.Join(powCacheRoot, id+".wasm")
-	tmp := wasmPath + ".tmp"
+	// A unique temp suffix keeps concurrent writers (parallel workers racing to
+	// cache the same rotation) from clobbering each other's in-progress file.
+	tmp := wasmPath + "." + randomSessionID() + ".tmp"
 	if err := os.WriteFile(tmp, m.wasm, 0600); err != nil {
 		return
 	}
@@ -209,22 +211,22 @@ func storeCachedModule(id string, m *powModule) {
 }
 
 // powGet fetches a challenge asset (worker/glue/wasm) from guns.lol with the
-// shared client, User-Agent, and clearance cookies. path is an absolute
+// session's client, User-Agent, and clearance cookies. path is an absolute
 // origin-relative path beginning with "/".
-func powGet(ctx context.Context, path string) ([]byte, error) {
+func (s *session) powGet(ctx context.Context, path string) ([]byte, error) {
 	req, err := http.NewRequestWithContext(ctx, "GET", gunsOrigin+path, nil)
 	if err != nil {
 		return nil, err
 	}
 	req.Header.Set("User-Agent", userAgent)
-	addClearanceCookies(req)
+	s.addClearanceCookies(req)
 
-	resp, err := httpClient.Do(req)
+	resp, err := s.client.Do(req)
 	if err != nil {
 		return nil, err
 	}
 	defer resp.Body.Close()
-	captureCfClearance(resp)
+	s.captureCfClearance(resp)
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
