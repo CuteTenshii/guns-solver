@@ -17,7 +17,10 @@ import (
 var userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36"
 
 func fatalf(format string, a ...any) {
-	fmt.Fprintf(os.Stderr, format+"\n", a...)
+	if activeSpinner != nil {
+		activeSpinner.fail()
+	}
+	fmt.Fprintf(os.Stderr, "\n  %s %s\n\n", red(bold("✗")), fmt.Sprintf(format, a...))
 	os.Exit(1)
 }
 
@@ -37,30 +40,40 @@ func main() {
 		}
 	}
 
+	banner()
+
 	if *linkID != "" {
 		ctx, cancel := context.WithTimeout(context.Background(), 180*time.Second)
 		defer cancel()
+		sp := startSpinner("Acquiring Cloudflare clearance")
 		if _, err := FetchWorkerData(ctx, *username); err != nil {
 			fatalf("Error acquiring Cloudflare clearance: %s", err)
 		}
+		sp.succeed("Acquired Cloudflare clearance")
+
+		sp = startSpinner("Submitting link click")
 		if err := SubmitLinkClick(*username, *linkID); err != nil {
 			fatalf("Error submitting link click: %s", err)
 		}
-		fmt.Println("Link click submitted successfully!")
+		sp.succeed("Submitted link click")
+
+		doneln("Link click recorded for %s", cyan(*linkID))
 		return
 	}
 
 	if *username == "" {
-		fatalf("Missing required flag: -username\nExample: guns-solver -username <username>")
+		fatalf("Missing required flag %s (example: guns-solver -username <username>)", bold("-username"))
 	}
 	if *capmonsterKey == "" {
-		fatalf("Missing required flag: -capmonster-key (needed to solve Cloudflare Turnstile)")
+		fatalf("Missing required flag %s (needed to solve Cloudflare Turnstile)", bold("-capmonster-key"))
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 180*time.Second)
 	defer cancel()
 
-	fmt.Println("Fetching worker data...")
+	infoln("target %s", cyan("guns.lol/"+*username))
+
+	sp := startSpinner("Fetching worker data")
 	workerData, err := FetchWorkerData(ctx, *username)
 	if err != nil {
 		fatalf("Error fetching worker data: %s", err)
@@ -69,14 +82,16 @@ func main() {
 		fatalf("Error fetching worker data: no data returned")
 	}
 	data := *workerData
+	sp.succeedDetail("Fetched worker data", fmt.Sprintf("difficulty %d · challenge %s", data.Difficulty, data.ID))
 
-	fmt.Println("Fetching current PoW module...")
+	sp = startSpinner("Fetching current PoW module")
 	powMod, err := FetchPowModule(ctx, data.ID, data.WorkerURL)
 	if err != nil {
 		fatalf("Error fetching PoW module: %s", err)
 	}
+	sp.succeed("Fetched current PoW module")
 
-	fmt.Println("Solving PoW and Turnstile simultaneously...")
+	sp = startSpinner("Solving PoW and Turnstile")
 
 	type wasmResult struct {
 		res      *WasmResult
@@ -116,14 +131,15 @@ func main() {
 	if wasmR.err != nil {
 		fatalf("Error solving PoW: %s", wasmR.err)
 	}
-	fmt.Printf("PoW solved in %s! proof=%s\n", wasmR.duration.Round(time.Millisecond), wasmR.res.Oo)
-
 	tR := <-turnstileCh
 	if tR.err != nil {
 		fatalf("Error solving Turnstile: %s", tR.err)
 	}
-	fmt.Printf("Turnstile solved in %s!\n", tR.duration.Round(time.Millisecond))
+	sp.succeed("Solved PoW and Turnstile")
+	infoln("PoW        %s · proof %s", wasmR.duration.Round(time.Millisecond), truncateMiddle(wasmR.res.Oo, 24))
+	infoln("Turnstile  %s", tR.duration.Round(time.Millisecond))
 
+	sp = startSpinner("Submitting solution")
 	err = SubmitSolution(ctx, SolutionPayload{
 		Username:  *username,
 		Version:   data.Version,
@@ -140,6 +156,7 @@ func main() {
 	if err != nil {
 		fatalf("Error submitting solution: %s", err)
 	}
+	sp.succeed("Submitted solution")
 
-	fmt.Println("Solution submitted successfully!")
+	doneln("View recorded for %s", cyan("guns.lol/"+*username))
 }

@@ -27,6 +27,7 @@ This is a Go reverse-engineering tool that automates the proof-of-work challenge
 - **`turnstile.go`** — `SolveTurnstile` solves the Cloudflare Turnstile (sitekey `0x4AAAAAAAgU7T2niLQD-TLm`) via CapMonster, using the challenge's `action` and `cd` values.
 - **`cf_clearance.go`** — `SolveCfClearance` mints a `cf_clearance` cookie via CapMonster when the analytics endpoint answers with a 403 Managed Challenge.
 - **`submit.go`** — `SubmitSolution` builds the positional-array body and POSTs it to `/api/analytics/view`, minting cf_clearance and retrying once on 403. `SubmitLinkClick` still targets the older `/api/analytics/record` labeled-object endpoint.
+- **`ui.go`** — Dependency-free terminal styling for the CLI: ANSI helpers (`bold`/`dim`/`cyan`/…) gated by `colorEnabled` (auto-disabled on non-TTY stdout, `NO_COLOR`, or `TERM=dumb`), a braille `spinner` for per-step progress that resolves to `✓`/`✗`, and `banner`/`infoln`/`warnln`/`doneln` line helpers. `fatalf` tears down the `activeSpinner` before printing an error; `infoln`/`warnln` clear a running spinner's frame so subsystem logs print above it without corrupting the animation. In non-TTY mode the spinner degrades to a static `→` line.
 - **`assets/`** — `gpp_gunslol_bg.wasm`, the embedded clearance binary (exports `gunssolver_new`; used only by `clearancePowModule()`). `gpp_gunslol_bg_old.wasm` is a retained older variant, unreferenced by code. The rotating view-PoW binaries are not stored here — they are fetched and cached under the temp dir.
 
 ### View proof-of-work flow (rotating)

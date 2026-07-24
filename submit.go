@@ -99,7 +99,7 @@ func SubmitSolution(ctx context.Context, p SolutionPayload, capmonsterKey string
 	// cookie. Mint one with CapMonster from the interstitial we just got, store
 	// it, and retry the POST once.
 	if status == http.StatusForbidden {
-		fmt.Println("Cloudflare challenge on submit, minting cf_clearance via CapMonster...")
+		warnln("Cloudflare 403 on submit — minting cf_clearance via CapMonster")
 		cookie, err := SolveCfClearance(ctx, capmonsterKey, "https://guns.lol/"+p.Username, respBody, proxyURL)
 		if err != nil {
 			return fmt.Errorf("mint cf_clearance: %w", err)

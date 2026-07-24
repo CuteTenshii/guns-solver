@@ -225,7 +225,7 @@ func FetchWorkerData(ctx context.Context, username string) (*WorkerData, error) 
 			gunsClearance = ""
 			os.Remove(clearanceFile())
 		}
-		fmt.Println("Got 401, solving clearance challenge...")
+		warnln("Got 401 — solving guns_clearance interstitial")
 		if err = solveChallenge(ctx, body); err != nil {
 			return nil, fmt.Errorf("challenge: %w", err)
 		}
@@ -275,12 +275,12 @@ func solveChallenge(ctx context.Context, body string) error {
 		return fmt.Errorf("invalid difficulty %q: %w", d[1], err)
 	}
 
-	fmt.Printf("Challenge params: o09=%s nonce=%s difficulty=%d\n", o09[1], nonce[1], difficulty)
+	infoln("clearance params: difficulty %d nonce %s", difficulty, nonce[1])
 	res, err := SolveWithWasm(ctx, clearancePowModule(), o09[1], difficulty, orgTs[1], nonce[1], twoXa[1])
 	if err != nil {
 		return fmt.Errorf("wasm solve: %w", err)
 	}
-	fmt.Printf("Challenge solved: _oo=%s\n", res.Oo)
+	infoln("clearance solved: _oo %s", truncateMiddle(res.Oo, 24))
 
 	var buf bytes.Buffer
 	w := multipart.NewWriter(&buf)
