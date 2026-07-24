@@ -33,14 +33,6 @@ Usage of ./guns-solver.exe:
         Profile username
 ```
 
-## Cloudflare
-
-guns.lol puts a Cloudflare bot check on the analytics endpoint that gates by the presence of `cf_clearance`, a client without this cookie gets a Cloudflare challenge (403).
-
-When the tool hits that challenge, it hands the interstitial to CapMonster's Cloudflare Challenge task (`cloudflareTaskType: cf_clearance`), which returns a `cf_clearance` cookie. The tool caches it under the temp dir (`<tmp>/guns-solver-pow/cf_clearance.txt`, reused across runs) and retries the request directly.
-
-`cf_clearance` is bound to a single IP and User-Agent, so `-proxy` is **required** to mint one, and CapMonster egresses through that same proxy so the cookie matches the tool's IP.
-
 ### Examples
 
 On Linux and macOS, the `.exe` extension is not present so remove it.
@@ -54,6 +46,14 @@ To add a link click:
 ```shell
 ./guns-solver.exe -link-id <link-id>
 ```
+
+## Cloudflare
+
+guns.lol puts a Cloudflare bot check on the analytics endpoint that gates by the presence of `cf_clearance`, a client without this cookie gets a Cloudflare challenge (403).
+
+When the tool hits that challenge, it hands the interstitial to CapMonster's Cloudflare Challenge task (`cloudflareTaskType: cf_clearance`), which returns a `cf_clearance` cookie. The tool caches it under the temp dir (`<tmp>/guns-solver-pow/cf_clearance.txt`, reused across runs) and retries the request directly.
+
+`cf_clearance` is bound to a single IP and User-Agent, so `-proxy` is **required** to mint one, and CapMonster egresses through that same proxy so the cookie matches the tool's IP.
 
 ## Botting your views
 
