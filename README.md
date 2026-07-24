@@ -1,6 +1,6 @@
 # guns.lol solver
 
-<sub>Last update to the WASM script: July 14, 2026.</sub>
+<sub>Last update to the WASM script: July 24, 2026 — guns.lol now rotates the PoW module (binary + export names) server-side, so the solver fetches and caches it per challenge.</sub>
 
 A solver for the guns.lol WebAssembly script, which is used to record views on profile pages.
 Made it because I was bored and wanted to see how it worked.
@@ -14,7 +14,7 @@ For an alternative to guns.lol, check out [Miwa.lol](https://miwa.lol)! It's bet
 ### Prerequisites
 
 - [Go](https://go.dev/dl/)
-- [Docker](https://docs.docker.com/desktop/#next-steps) (for FlareSolverr)
+- A [CapMonster](https://capmonster.cloud/) API key (solves the Turnstile and mints the Cloudflare `cf_clearance` cookie)
 
 ### Steps 
 
@@ -24,9 +24,7 @@ For an alternative to guns.lol, check out [Miwa.lol](https://miwa.lol)! It's bet
 ```bash
 Usage of ./guns-solver.exe:
   -capmonster-key string
-        CapMonster API key for Cloudflare Turnstile solving
-  -flaresolverr string
-        FlareSolverr endpoint (e.g. http://localhost:8191/v1) to POST the analytics record through a real browser, bypassing Cloudflare's bot check
+        CapMonster API key for solving Turnstile and minting cf_clearance
   -link-id string
         Link UUID to record a click event instead of a profile view
   -proxy string
@@ -37,14 +35,11 @@ Usage of ./guns-solver.exe:
 
 ## Cloudflare
 
-guns.lol puts a Cloudflare bot check on the analytics endpoint that gates by the presence of `cf_clearance`, a client without this cookie gets a Cloudflare challenge.
+guns.lol puts a Cloudflare bot check on the analytics endpoint that gates by the presence of `cf_clearance`, a client without this cookie gets a Cloudflare challenge (403).
 
-To get around it, the tool `POST`s the record through a real browser via FlareSolverr:
-```shell
-docker compose up -d # starts FlareSolverr on 127.0.0.1:8191
-```
+When the tool hits that challenge, it hands the interstitial to CapMonster's Cloudflare Challenge task (`cloudflareTaskType: cf_clearance`), which returns a `cf_clearance` cookie. The tool caches it under the temp dir (`<tmp>/guns-solver-pow/cf_clearance.txt`, reused across runs) and retries the request directly.
 
-Then pass `-flaresolverr http://localhost:8191/v1`. Your `-proxy` is forwarded to FlareSolverr (credentials split out, since Chrome rejects inline-auth proxy URLs) so the browser and the tool share one egress IP.
+`cf_clearance` is bound to a single IP and User-Agent, so `-proxy` is **required** to mint one, and CapMonster egresses through that same proxy so the cookie matches the tool's IP.
 
 ### Examples
 

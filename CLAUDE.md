@@ -7,34 +7,68 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ```bash
 go build          # build the binary
 go run .          # run without building
-./guns-solver -username <username>   # run the solver
+./guns-solver -username <username> -capmonster-key <key>   # run the solver
 go vet ./...      # lint
-go test ./...     # run tests (none exist yet)
+go test ./...     # run tests (includes a ~3s known-answer WASM solve)
 ```
 
-No external dependencies — `go.mod` uses only the standard library.
+Depends on `github.com/tetratelabs/wazero` (runs the PoW WASM) plus the standard library.
 
 ## Architecture
 
-This is a Go reverse-engineering tool that automates the proof-of-work challenge used by guns.lol to record profile views. It has no tests and no build scripts beyond `go build`.
+This is a Go reverse-engineering tool that automates the proof-of-work challenge guns.lol uses to record profile views (`POST /api/analytics/view`).
 
 ### Files
 
-- **`main.go`** — Entry point. Parses `-username` flag, fetches worker data, runs the solver, and submits. Currently hardcodes known test values for `Nonce`, `Underscore2xa`, and `O09` to validate the solver against a known challenge. The actual HTTP submission in `SubmitSolution` is commented out.
-- **`worker_data.go`** — `FetchWorkerData(username)` scrapes the guns.lol profile page HTML via regex to extract `_n` (nonce), `o09`, `_2xa`, and `org_ts` values needed to construct the PoW challenge. Handles `guns_clearance` cookie redirect flow automatically.
-- **`solver.go`** — `GunsSolver` struct. `SolveConcurrent` runs CPU-count goroutines that brute-force a nonce string such that `SHA-256(Nonce + Underscore2xa + candidate)` meets the difficulty target. Supports two modes: `LeadingHexNibbles` (default, difficulty=5 means 5 leading hex zeros) and `LeadingZeroBits`. Nonce candidates are enumerated via `incrementStringWithCharset` over an alphanumeric charset.
-- **`submit.go`** — `SubmitSolution` builds the `POST /api/analytics/record` JSON payload and prints it. The actual HTTP call is commented out pending full reverse engineering.
-- **`assets/`** — Research artifacts: `gpp_gunslol.js` (WASM JS loader), `next.js` (profile page script), `request.http` (reference request), `gpp_gunslol_bg.wasm` (the WASM binary).
+- **`main.go`** — Entry point. Parses flags (`-username`, `-capmonster-key`, `-proxy`, `-link-id`), fetches the challenge, solves the PoW and Turnstile concurrently, then submits. `userAgent` is shared across every request (cf_clearance is bound to it).
+- **`worker_data.go`** — `FetchWorkerData(username)` fetches the profile page and `parseGppChallenge` extracts the `_gpp_ch` object out of the Next.js flight payload (it lives inside a JS string literal, so the captured JSON is un-escaped before `json.Unmarshal`). Also holds the clearance-cookie plumbing and the `guns_clearance` 401 interstitial flow (`solveChallenge`), a **separate** subsystem that uses the `_gs_sets` format and the embedded clearance binary.
+- **`pow_module.go`** — `FetchPowModule(id, workerPath)` resolves the current view-PoW module for a challenge. The worker, glue, and binary all live under `/_challenge/pow/<id>/`; `fetchPowModule` fetches the worker, XOR-decodes the glue import name, parses the glue for the wasm URL and the rotated constructor/solve export symbols, and fetches the binary, returning a `powModule{wasm, ctorExport, solveExport}`. Results are cached to disk keyed by challenge id (`powCacheRoot`, under the temp dir) — the module is immutable under a given id and the id only changes on rotation, so a cache hit is always current and skips all three round-trips.
+- **`wasm.go`** — `SolveWithWasm(m *powModule, ...)` runs a given PoW module via wazero, reimplementing the wasm-bindgen JS glue (a JS heap with free-list, the host imports, string passing). The constructor ABI is `(challenge, difficulty, orgTs, nonce, seal) -> ptr`; the solve method writes 3×i32 to a return slot and yields a result object whose `_oo` field is the proof. `clearancePowModule()` wraps the **embedded** stable clearance binary (`assets/gpp_gunslol_bg.wasm`, exports `gunssolver_new`/`gunssolver_solve_pow`) as a `powModule`.
+- **`turnstile.go`** — `SolveTurnstile` solves the Cloudflare Turnstile (sitekey `0x4AAAAAAAgU7T2niLQD-TLm`) via CapMonster, using the challenge's `action` and `cd` values.
+- **`cf_clearance.go`** — `SolveCfClearance` mints a `cf_clearance` cookie via CapMonster when the analytics endpoint answers with a 403 Managed Challenge.
+- **`submit.go`** — `SubmitSolution` builds the positional-array body and POSTs it to `/api/analytics/view`, minting cf_clearance and retrying once on 403. `SubmitLinkClick` still targets the older `/api/analytics/record` labeled-object endpoint.
+- **`assets/`** — `gpp_gunslol_bg.wasm`, the embedded clearance binary (exports `gunssolver_new`; used only by `clearancePowModule()`). `gpp_gunslol_bg_old.wasm` is a retained older variant, unreferenced by code. The rotating view-PoW binaries are not stored here — they are fetched and cached under the temp dir.
 
-### Current Status / Known Unknowns
+### View proof-of-work flow (rotating)
 
-The payload field `_gpp_ch` contains a `seal` object (`{_oo, seal}`) whose values are not yet known. The Turnstile token (`_t`) is not solved. The WASM module (`gpp_gunslol_bg.wasm`, written in Rust) has been converted to C via `wasm2c` for analysis — its `solve_pow` output is a 5-character hex string used as `ResultHash`.
+guns.lol replaced the old cross-origin WASM solver with a **same-origin, server-issued worker** served from `/_challenge/pow/<id>/<worker>`. The worker (XOR-obfuscated) dynamically imports a wasm-bindgen glue module and runs `new Solver(c, Number(d), String(t), n, s).solve()`, posting back `_oo`.
 
-The `_` and `_2` dynamic hashes inside the old `__hcm` payload structure have been partially reversed; see README.md and commit history for current progress.
+**This module rotates periodically (≈hourly, server-side): the binary content, its hashed export symbols, the glue/worker filenames, and the worker's XOR key all change together.** The binary embeds a rotation-specific key the constructor uses to validate the challenge `seal`; a stale binary rejects a current seal with **error code 1003**. So the tool must **fetch the current module per run** (`FetchPowModule`) rather than embed one — do not re-embed the view binary.
 
-### Key Field Naming
+What is stable across rotations: the host imports (`__wbg*`), the `malloc`/`realloc`/`add_to_stack_pointer` export names, the constructor ABI `(challenge, difficulty, orgTs, nonce, seal) -> ptr`, and the func indices (ctor=8, solve=7). Only the ctor/solve export *names* rotate — hence `FetchPowModule` parses them out of the glue (the wasm export called with 9 args is the ctor; the one whose 2nd arg is `this.__wbg_ptr` is solve).
 
-The fields use obfuscated names from the JS source:
-- `Underscore2xa` → `_2xa` in the page HTML / `ps` (public salt) conceptually
-- `O09` → `o09` in the page HTML (a 64-char hex string, likely the challenge)
-- `Nonce` → `_n` in the worker script
+The `guns_clearance` 401 interstitial is a **separate** subsystem and did not change; it keeps using the stable embedded binary via `clearancePowModule()`.
+
+### `_gpp_ch` schema (short keys → fields)
+
+The challenge object on the profile page uses single-letter keys (`WorkerData` expands them):
+
+- `v` → `Version` — payload schema version (3)
+- `e` → `ID` — challenge id (first path segment of the worker URL)
+- `u` → `WorkerURL` — same-origin path of the PoW worker module
+- `t` → `Timestamp` — challenge issue time (unix seconds), passed to the solver as a string
+- `n` → `Nonce`
+- `s` → `Seal` — opaque server seal, fed to the solver and replayed in the solution
+- `c` → `Challenge` — 64-char hex challenge input
+- `d` → `Difficulty`
+- `cd` → `CData` — Turnstile `data-cdata`
+- `a` → `Action` — Turnstile `data-action` (`guns_view`)
+
+### Submission payload
+
+`/api/analytics/view` now takes a positional JSON array (`Content-Type: application/json`):
+
+```
+[token, [v, e, t, n, s, c, proof], username, deviceNum, referrer]
+```
+
+`deviceNum` is a numeric enum: desktop=0, mobile=1, tablet=2. `proof` is the solver's `_oo`.
+
+### Testing
+
+- `go test ./...` runs offline unit tests: `TestSolveWithWasmKnownSample` (known-answer against the embedded clearance binary), `TestParseGlue`/`TestDecodeGlueImport` (the runtime glue/worker parsing), `TestPowModuleCache` (the disk cache round-trip and path-safety), `TestParseGppChallenge`, and `TestBuildViewPayloadShape`.
+- `GUNS_LIVE=1 [GUNS_USER=<name>] go test -run TestLivePowSolve` runs the network-gated integration test: fetch the current module and solve the current challenge. This is the regression test for the rotation 1003 bug.
+
+### Known unknowns
+
+- The live fetch-and-solve path is verified (no 1003), but a full end-to-end **submit** to `/api/analytics/view` (real CapMonster key + cf_clearance) accepting the proof has not been confirmed against the origin.
