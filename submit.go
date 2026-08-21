@@ -101,10 +101,15 @@ func (s *session) SubmitSolution(ctx context.Context, p SolutionPayload, captcha
 	if status == http.StatusForbidden {
 		s.warnf("Cloudflare 403 on submit — minting cf_clearance via %s", captcha.Name())
 		clearance, err := captcha.SolveCfClearance(ctx, clearanceRequest{
-			PageURL:   "https://guns.lol/" + p.Username,
-			HTMLPage:  respBody,
-			ProxyURL:  s.proxyURL,
-			UserAgent: userAgent,
+			PageURL: "https://guns.lol/" + p.Username,
+
+			ChallengeURL: analyticsViewURL,
+			// The Managed Challenge sits on the POST; a GET to the same path is
+			// not challenged.
+			ChallengeMethod: http.MethodPost,
+			HTMLPage:        respBody,
+			ProxyURL:        s.proxyURL,
+			UserAgent:       userAgent,
 		})
 		if err != nil {
 			return fmt.Errorf("mint cf_clearance: %w", err)

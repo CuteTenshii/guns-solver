@@ -43,9 +43,22 @@ type turnstileRequest struct {
 
 // clearanceRequest describes a Cloudflare Managed Challenge to clear.
 type clearanceRequest struct {
+	// PageURL is the site the cookie is for.
 	PageURL string
+	// ChallengeURL is the exact URL whose response carried the challenge.
+	// Providers that browse to the challenge themselves must navigate here
+	// rather than to PageURL: Cloudflare only issues cf_clearance when it
+	// actually challenges, and the profile page is served unchallenged to a
+	// real browser. The cookie is scoped to the whole guns.lol zone, so
+	// clearing it on any path covers the rest.
+	ChallengeURL string
+	// ChallengeMethod is the HTTP method that drew the challenge. The analytics
+	// endpoint only answers POST, so a GET navigation reaches a different rule
+	// and is never challenged.
+	ChallengeMethod string
 	// HTMLPage is the "Just a moment" interstitial body captured from the 403.
-	// CapMonster replays it; Solverify navigates the page itself and ignores it.
+	// CapMonster replays it; Solverify navigates the challenge itself and
+	// ignores it.
 	HTMLPage []byte
 	// ProxyURL must be the proxy the tool itself egresses through: cf_clearance
 	// is bound to the IP that solved the challenge.

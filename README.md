@@ -71,7 +71,7 @@ To add a link click:
 
 guns.lol puts a Cloudflare bot check on the analytics endpoint that gates by the presence of `cf_clearance`, a client without this cookie gets a Cloudflare challenge (403).
 
-When the tool hits that challenge, it asks the selected captcha provider to clear it — CapMonster's Cloudflare Challenge task (`cloudflareTaskType: cf_clearance`), which replays the captured interstitial, or Solverify's `interstitial` task, which navigates the page itself. Either returns a `cf_clearance` cookie. The tool caches it under the temp dir (`<tmp>/guns-solver-pow/cf_clearance.txt`, reused across runs) and retries the request directly.
+When the tool hits that challenge, it asks the selected captcha provider to clear it — CapMonster's Cloudflare Challenge task (`cloudflareTaskType: cf_clearance`), which replays the captured interstitial, or Solverify's `interstitial` task, which re-drives the challenged request itself (`POST /api/analytics/view`, since that is the request Cloudflare challenges — the profile page is served to a real browser unchallenged). Either returns a `cf_clearance` cookie. The tool caches it under the temp dir (`<tmp>/guns-solver-pow/cf_clearance.txt`, reused across runs) and retries the request directly.
 
 `cf_clearance` is bound to a single IP and User-Agent, so `-proxy` is **required** to mint one, and the provider egresses through that same proxy so the cookie matches the tool's IP. Solverify only accepts `http` proxies for this task.
 

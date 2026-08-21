@@ -149,8 +149,10 @@ func TestSolverifyTaskShape(t *testing.T) {
 
 	interstitial, err := json.Marshal(solverifyInterstitialTask{
 		Type:          "interstitial",
-		WebsiteURL:    "https://guns.lol/user",
+		WebsiteURL:    "https://guns.lol/api/analytics/view",
 		UserAgent:     "UA",
+		Source:        true,
+		Method:        "POST",
 		ProxyType:     "http",
 		ProxyAddress:  "1.1.1.1",
 		ProxyPort:     "8080",
@@ -160,8 +162,9 @@ func TestSolverifyTaskShape(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal interstitial task: %v", err)
 	}
-	wantInterstitial := `{"type":"interstitial","websiteURL":"https://guns.lol/user","useragent":"UA",` +
-		`"proxyType":"http","proxyAddress":"1.1.1.1","proxyPort":"8080","proxyLogin":"u","proxyPassword":"p"}`
+	wantInterstitial := `{"type":"interstitial","websiteURL":"https://guns.lol/api/analytics/view","useragent":"UA",` +
+		`"source":true,"method":"POST","proxyType":"http","proxyAddress":"1.1.1.1","proxyPort":"8080",` +
+		`"proxyLogin":"u","proxyPassword":"p"}`
 	if string(interstitial) != wantInterstitial {
 		t.Errorf("interstitial task =\n%s\nwant\n%s", interstitial, wantInterstitial)
 	}
@@ -195,6 +198,25 @@ func TestSolverifyResultDecode(t *testing.T) {
 	}
 	if interstitial.Solution.UserAgent != "UA" {
 		t.Errorf("useragent = %q", interstitial.Solution.UserAgent)
+	}
+
+	// The jar is also accepted as a list of cookie objects.
+	const listBody = `{"errorId":0,"status":"completed","solution":{"cookies":` +
+		`[{"name":"__cf_bm","value":"a"},{"name":"cf_clearance","value":"b"}],"useragent":"UA"}}`
+	var asList solverifyResultResponse
+	if err := json.Unmarshal([]byte(listBody), &asList); err != nil {
+		t.Fatalf("decode list-shaped cookies: %v", err)
+	}
+	if got := asList.Solution.Cookies["cf_clearance"]; got != "b" {
+		t.Errorf("cf_clearance from list = %q, want %q", got, "b")
+	}
+	if got := asList.Solution.Cookies.names(); got != "__cf_bm, cf_clearance" {
+		t.Errorf("cookie names = %q", got)
+	}
+
+	var empty solverifyCookies
+	if got := empty.names(); got != "none" {
+		t.Errorf("empty cookie names = %q, want %q", got, "none")
 	}
 
 	const failedBody = `{"errorId":1,"status":"failed","errorCode":"ERROR_TASK_FAILED",` +
@@ -260,6 +282,44 @@ func TestSolveCfClearanceRequiresProxy(t *testing.T) {
 		if _, err := p.SolveCfClearance(t.Context(), clearanceRequest{PageURL: "https://guns.lol/user"}); err == nil {
 			t.Errorf("%s: expected an error without a proxy", name)
 		}
+	}
+}
+
+func TestDescribeLandedPage(t *testing.T) {
+	tests := []struct {
+		name string
+		page string
+		want string
+	}{
+		{name: "empty", page: "", want: "no page captured"},
+		{name: "challenge", page: "<html><title>Just a moment...</title></html>", want: "a Cloudflare challenge page"},
+		{name: "challenge script", page: `<script src="/cdn-cgi/challenge-platform/h/b/x"></script>`, want: "a Cloudflare challenge page"},
+		{name: "origin error", page: "<html>\n  Method   Not  Allowed\n</html>", want: "<html> Method Not Allowed </html>"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := describeLandedPage(tc.page); got != tc.want {
+				t.Errorf("describeLandedPage(%q) = %q, want %q", tc.page, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestSolverifyRejectsUnsupportedMethod covers the GET/POST-only navigation
+// rule, since the challenged request's method is replayed verbatim.
+func TestSolverifyRejectsUnsupportedMethod(t *testing.T) {
+	p, err := newCaptchaProvider(providerSolverify, "key")
+	if err != nil {
+		t.Fatalf("newCaptchaProvider: %v", err)
+	}
+	_, err = p.SolveCfClearance(t.Context(), clearanceRequest{
+		PageURL:         "https://guns.lol/user",
+		ChallengeURL:    "https://guns.lol/api/analytics/view",
+		ChallengeMethod: "PUT",
+		ProxyURL:        "http://1.1.1.1:8080",
+	})
+	if err == nil {
+		t.Error("expected an error for a PUT challenge method")
 	}
 }
 
