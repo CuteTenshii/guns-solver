@@ -83,7 +83,7 @@ func buildViewPayload(p SolutionPayload) ([]byte, error) {
 	return json.Marshal([]any{p.Token, challenge, p.Username, p.DeviceNum, p.Referrer})
 }
 
-func (s *session) SubmitSolution(ctx context.Context, p SolutionPayload, capmonsterKey string) error {
+func (s *session) SubmitSolution(ctx context.Context, p SolutionPayload, captcha captchaProvider) error {
 	jsonPayload, err := buildViewPayload(p)
 	if err != nil {
 		return err
@@ -96,15 +96,27 @@ func (s *session) SubmitSolution(ctx context.Context, p SolutionPayload, capmons
 
 	// Cloudflare gates this endpoint by client fingerprint: a raw Go client is
 	// answered with a 403 challenge unless it presents a valid cf_clearance
-	// cookie. Mint one with CapMonster from the interstitial we just got, store
-	// it, and retry the POST once.
+	// cookie. Mint one through the captcha provider from the interstitial we
+	// just got, store it, and retry the POST once.
 	if status == http.StatusForbidden {
-		s.warnf("Cloudflare 403 on submit — minting cf_clearance via CapMonster")
-		cookie, err := SolveCfClearance(ctx, capmonsterKey, "https://guns.lol/"+p.Username, respBody, s.proxyURL)
+		s.warnf("Cloudflare 403 on submit — minting cf_clearance via %s", captcha.Name())
+		clearance, err := captcha.SolveCfClearance(ctx, clearanceRequest{
+			PageURL:   "https://guns.lol/" + p.Username,
+			HTMLPage:  respBody,
+			ProxyURL:  s.proxyURL,
+			UserAgent: userAgent,
+		})
 		if err != nil {
 			return fmt.Errorf("mint cf_clearance: %w", err)
 		}
-		s.cfClearance = cookie
+		// The cookie is bound to the browser identity that solved the
+		// challenge; if the provider used a different one, our requests will
+		// not match it.
+		if clearance.UserAgent != "" && clearance.UserAgent != userAgent {
+			s.warnf("%s solved the challenge as %q, not our User-Agent — the cookie may be rejected",
+				captcha.Name(), clearance.UserAgent)
+		}
+		s.cfClearance = clearance.Cookie
 		s.saveCfClearance()
 
 		status, respBody, err = s.postAnalyticsView(jsonPayload, p.Username)

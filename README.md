@@ -14,7 +14,9 @@ For an alternative to guns.lol, check out [Miwa.lol](https://miwa.lol)! It's bet
 ### Prerequisites
 
 - [Go](https://go.dev/dl/)
-- A [CapMonster](https://capmonster.cloud/) API key (solves the Turnstile and mints the Cloudflare `cf_clearance` cookie)
+- An API key for one of the supported captcha providers, which solve the Turnstile and mint the Cloudflare `cf_clearance` cookie:
+  - [CapMonster](https://capmonster.cloud/) — `-captcha-provider capmonster` (the default)
+  - [Solverify](https://solverify.net/) — `-captcha-provider solverify`
 
 ### Steps 
 
@@ -24,7 +26,11 @@ For an alternative to guns.lol, check out [Miwa.lol](https://miwa.lol)! It's bet
 ```bash
 Usage of ./guns-solver.exe:
   -capmonster-key string
-        CapMonster API key for solving Turnstile and minting cf_clearance
+        Deprecated: use -captcha-key with -captcha-provider capmonster
+  -captcha-key string
+        API key for the selected captcha provider, used to solve Turnstile and mint cf_clearance
+  -captcha-provider string
+        Captcha solving service: capmonster or solverify (default capmonster)
   -concurrency int
         Maximum views to record simultaneously (default: min(count, 5))
   -count int
@@ -43,12 +49,17 @@ On Linux and macOS, the `.exe` extension is not present so remove it.
 
 To add a view to a user:
 ```shell
-./guns-solver.exe -username <username> -capmonster-key ... -proxy ...
+./guns-solver.exe -username <username> -captcha-key ... -proxy ...
+```
+
+To use Solverify instead of CapMonster:
+```shell
+./guns-solver.exe -username <username> -captcha-provider solverify -captcha-key ... -proxy ...
 ```
 
 To add many views at once (50 total, 8 in flight, each on its own IP):
 ```shell
-./guns-solver.exe -username <username> -capmonster-key ... -count 50 -concurrency 8 -proxy "http://user:pass_session-{session}@host:port"
+./guns-solver.exe -username <username> -captcha-key ... -count 50 -concurrency 8 -proxy "http://user:pass_session-{session}@host:port"
 ```
 
 To add a link click:
@@ -60,9 +71,11 @@ To add a link click:
 
 guns.lol puts a Cloudflare bot check on the analytics endpoint that gates by the presence of `cf_clearance`, a client without this cookie gets a Cloudflare challenge (403).
 
-When the tool hits that challenge, it hands the interstitial to CapMonster's Cloudflare Challenge task (`cloudflareTaskType: cf_clearance`), which returns a `cf_clearance` cookie. The tool caches it under the temp dir (`<tmp>/guns-solver-pow/cf_clearance.txt`, reused across runs) and retries the request directly.
+When the tool hits that challenge, it asks the selected captcha provider to clear it — CapMonster's Cloudflare Challenge task (`cloudflareTaskType: cf_clearance`), which replays the captured interstitial, or Solverify's `interstitial` task, which navigates the page itself. Either returns a `cf_clearance` cookie. The tool caches it under the temp dir (`<tmp>/guns-solver-pow/cf_clearance.txt`, reused across runs) and retries the request directly.
 
-`cf_clearance` is bound to a single IP and User-Agent, so `-proxy` is **required** to mint one, and CapMonster egresses through that same proxy so the cookie matches the tool's IP.
+`cf_clearance` is bound to a single IP and User-Agent, so `-proxy` is **required** to mint one, and the provider egresses through that same proxy so the cookie matches the tool's IP. Solverify only accepts `http` proxies for this task.
+
+The `-capmonster-key` flag still works and selects CapMonster, but it is deprecated in favour of `-captcha-provider` / `-captcha-key`.
 
 ## Botting your views
 
@@ -84,6 +97,6 @@ Personally I got banned after multiple days **BUT** I've seen people I botted no
 
 This is built in — no shell loops or GNU Parallel needed. Use `-count` for how many views to record and `-concurrency` for how many run at the same time:
 ```shell
-./guns-solver -username <username> -capmonster-key ... -count 100 -concurrency 40 -proxy "http://user:pass_session-{session}@host:port"
+./guns-solver -username <username> -captcha-key ... -count 100 -concurrency 40 -proxy "http://user:pass_session-{session}@host:port"
 ```
 Each view runs on its own proxy session (its own IP and `cf_clearance`), so the counts are what you'd expect. A live progress board shows each worker; when the output is piped/redirected it falls back to one line per completed view. Press `Ctrl-C` to stop early — it reports what already completed.

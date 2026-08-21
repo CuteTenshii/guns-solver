@@ -13,13 +13,13 @@ import (
 )
 
 // userAgent is the User-Agent sent on every guns.lol request, and the UA passed
-// to CapMonster when minting a cf_clearance cookie. cf_clearance is bound to the
-// UA that solved the Cloudflare challenge, so the same value must be used
-// everywhere for the whole flow to stay consistent.
+// to the captcha provider when minting a cf_clearance cookie. cf_clearance is
+// bound to the UA that solved the Cloudflare challenge, so the same value must
+// be used everywhere for the whole flow to stay consistent.
 var userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36"
 
 // perViewTimeout bounds a single record-a-view attempt (challenge fetch through
-// submission, including the CapMonster round-trips).
+// submission, including the captcha provider round-trips).
 const perViewTimeout = 180 * time.Second
 
 // defaultConcurrency caps how many views run at once when -concurrency is not
@@ -36,7 +36,10 @@ func fatalf(format string, a ...any) {
 
 func main() {
 	username := flag.String("username", "", "Profile username")
-	capmonsterKey := flag.String("capmonster-key", "", "CapMonster API key for solving Turnstile and minting cf_clearance")
+	captchaProviderName := flag.String("captcha-provider", "",
+		"Captcha solving service: "+strings.Join(supportedCaptchaProviders, " or ")+" (default "+providerCapmonster+")")
+	captchaKey := flag.String("captcha-key", "", "API key for the selected captcha provider, used to solve Turnstile and mint cf_clearance")
+	capmonsterKey := flag.String("capmonster-key", "", "Deprecated: use -captcha-key with -captcha-provider "+providerCapmonster)
 	proxy := flag.String("proxy", "", "Proxy URL for guns.lol requests (e.g. http://user:pass@host:port). A {session} placeholder is replaced with a fresh token per worker for rotating sticky-session proxies")
 	linkID := flag.String("link-id", "", "Link UUID to record a click event instead of a profile view")
 	count := flag.Int("count", 1, "Number of profile views to record")
@@ -53,8 +56,23 @@ func main() {
 	if *username == "" {
 		fatalf("Missing required flag %s (example: guns-solver -username <username>)", bold("-username"))
 	}
-	if *capmonsterKey == "" {
-		fatalf("Missing required flag %s (needed to solve Cloudflare Turnstile)", bold("-capmonster-key"))
+	providerName, apiKey, notice, err := captchaFlags{
+		provider:      *captchaProviderName,
+		key:           *captchaKey,
+		capmonsterKey: *capmonsterKey,
+	}.resolve()
+	if err != nil {
+		fatalf("%s", err)
+	}
+	if notice != "" {
+		warnln("%s", notice)
+	}
+	if apiKey == "" {
+		fatalf("Missing required flag %s (needed to solve Cloudflare Turnstile)", bold("-captcha-key"))
+	}
+	captcha, err := newCaptchaProvider(providerName, apiKey)
+	if err != nil {
+		fatalf("%s", err)
 	}
 	if *count < 1 {
 		fatalf("Invalid -count %d: must be at least 1", *count)
@@ -68,7 +86,7 @@ func main() {
 		conc = *count
 	}
 
-	cfg := viewConfig{Username: *username, CapmonsterKey: *capmonsterKey, DeviceNum: 0, Referrer: ""}
+	cfg := viewConfig{Username: *username, Captcha: captcha, DeviceNum: 0, Referrer: ""}
 
 	if *count == 1 {
 		runSingle(cfg, *proxy)
@@ -115,7 +133,7 @@ func runSingle(cfg viewConfig, proxy string) {
 		fatalf("Invalid proxy URL: %s", err)
 	}
 
-	infoln("target %s", cyan("guns.lol/"+cfg.Username))
+	infoln("target %s · captcha %s", cyan("guns.lol/"+cfg.Username), cyan(cfg.Captcha.Name()))
 	if err := sess.runView(ctx, cfg, &spinnerReporter{}); err != nil {
 		fatalf("%s", err)
 	}
@@ -125,6 +143,7 @@ func runSingle(cfg viewConfig, proxy string) {
 // runParallel records count views across conc worker slots, each on its own
 // proxy session (and thus its own IP and cf_clearance), rendering a live board.
 func runParallel(cfg viewConfig, proxy string, count, conc int) {
+	infoln("target %s · captcha %s", cyan("guns.lol/"+cfg.Username), cyan(cfg.Captcha.Name()))
 	if proxy == "" || !strings.Contains(proxy, proxySessionPlaceholder) {
 		warnln("workers will share one egress IP; use a {session} proxy so each view gets a distinct IP")
 	}

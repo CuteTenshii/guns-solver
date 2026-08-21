@@ -9,10 +9,11 @@ import (
 	"time"
 )
 
-// viewConfig is the immutable per-view input shared by every worker.
+// viewConfig is the immutable per-view input shared by every worker. Captcha
+// is a stateless provider, so every worker solves through the same instance.
 type viewConfig struct {
-	Username      string
-	CapmonsterKey string
+	Username string
+	Captcha  captchaProvider
 	// DeviceNum is the numeric device enum guns.lol expects: desktop=0,
 	// mobile=1, tablet=2.
 	DeviceNum int
@@ -97,7 +98,12 @@ func (s *session) solvePowAndTurnstile(ctx context.Context, cfg viewConfig, wd *
 	go func() {
 		defer wg.Done()
 		start := time.Now()
-		token, err := SolveTurnstile(ctx, cfg.CapmonsterKey, "https://guns.lol/"+cfg.Username, wd.Action, wd.CData)
+		token, err := cfg.Captcha.SolveTurnstile(ctx, turnstileRequest{
+			PageURL: "https://guns.lol/" + cfg.Username,
+			SiteKey: turnstileSiteKey,
+			Action:  wd.Action,
+			CData:   wd.CData,
+		})
 		turnCh <- turnOut{token, err, time.Since(start)}
 	}()
 
@@ -155,7 +161,7 @@ func (s *session) runView(ctx context.Context, cfg viewConfig, r reporter) error
 		Token:     sr.token,
 		Referrer:  cfg.Referrer,
 		DeviceNum: cfg.DeviceNum,
-	}, cfg.CapmonsterKey)
+	}, cfg.Captcha)
 	if err != nil {
 		return fmt.Errorf("submit: %w", err)
 	}
