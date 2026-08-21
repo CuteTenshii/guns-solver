@@ -11,8 +11,6 @@ func TestCaptchaFlagsResolve(t *testing.T) {
 		flags        captchaFlags
 		wantProvider string
 		wantKey      string
-		wantNotice   bool
-		wantErr      bool
 	}{
 		{
 			name:         "defaults to capmonster",
@@ -27,56 +25,34 @@ func TestCaptchaFlagsResolve(t *testing.T) {
 			wantKey:      "k",
 		},
 		{
-			name:         "deprecated flag implies capmonster",
-			flags:        captchaFlags{capmonsterKey: "old"},
-			wantProvider: providerCapmonster,
-			wantKey:      "old",
-			wantNotice:   true,
-		},
-		{
-			name:         "deprecated flag alongside matching provider",
-			flags:        captchaFlags{provider: providerCapmonster, capmonsterKey: "old"},
-			wantProvider: providerCapmonster,
-			wantKey:      "old",
-			wantNotice:   true,
-		},
-		{
-			name:    "deprecated flag conflicts with another provider",
-			flags:   captchaFlags{provider: providerSolverify, capmonsterKey: "old"},
-			wantErr: true,
-		},
-		{
-			name:    "both key flags",
-			flags:   captchaFlags{key: "new", capmonsterKey: "old"},
-			wantErr: true,
+			name:         "explicit uncaptcha",
+			flags:        captchaFlags{provider: providerUncaptcha, key: "k"},
+			wantProvider: providerUncaptcha,
+			wantKey:      "k",
 		},
 		{
 			name:         "no key resolves but stays empty",
 			flags:        captchaFlags{},
 			wantProvider: providerCapmonster,
 		},
+		{
+			// An unrecognised name is passed through for newCaptchaProvider to
+			// reject, so the error names the supported set in one place.
+			name:         "unknown provider passes through",
+			flags:        captchaFlags{provider: "nope", key: "k"},
+			wantProvider: "nope",
+			wantKey:      "k",
+		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			provider, key, notice, err := tc.flags.resolve()
-			if tc.wantErr {
-				if err == nil {
-					t.Fatalf("expected an error, got provider %q key %q", provider, key)
-				}
-				return
-			}
-			if err != nil {
-				t.Fatalf("resolve: %v", err)
-			}
+			provider, key := tc.flags.resolve()
 			if provider != tc.wantProvider {
 				t.Errorf("provider = %q, want %q", provider, tc.wantProvider)
 			}
 			if key != tc.wantKey {
 				t.Errorf("key = %q, want %q", key, tc.wantKey)
-			}
-			if (notice != "") != tc.wantNotice {
-				t.Errorf("notice = %q, want notice: %v", notice, tc.wantNotice)
 			}
 		})
 	}
@@ -335,5 +311,141 @@ func TestSolverifyRejectsNonHTTPProxy(t *testing.T) {
 	})
 	if err == nil {
 		t.Error("expected an error for a socks5 proxy")
+	}
+}
+
+// TestUncaptchaTaskShape pins uncaptcha.io's request shape. Its fields are
+// snake_case and nested under task_data — nothing like the other two services —
+// so a rename here silently breaks solving.
+func TestUncaptchaTaskShape(t *testing.T) {
+	turnstile, err := json.Marshal(uncaptchaExecuteRequest{
+		TaskType: uncaptchaTaskTurnstile,
+		TaskData: uncaptchaTurnstileTask{
+			URL:     "https://guns.lol/user",
+			SiteKey: turnstileSiteKey,
+			Action:  "guns_view",
+			CData:   "cd",
+		},
+	})
+	if err != nil {
+		t.Fatalf("marshal turnstile task: %v", err)
+	}
+	wantTurnstile := `{"task_type":"turnstile","task_data":{"url":"https://guns.lol/user","sitekey":"` +
+		turnstileSiteKey + `","action":"guns_view","cdata":"cd"}}`
+	if string(turnstile) != wantTurnstile {
+		t.Errorf("turnstile task =\n%s\nwant\n%s", turnstile, wantTurnstile)
+	}
+
+	// action and cdata must be omitted rather than sent empty: the service
+	// rejects a solve whose action/cdata do not match the widget.
+	bare, err := json.Marshal(uncaptchaTurnstileTask{URL: "u", SiteKey: "k"})
+	if err != nil {
+		t.Fatalf("marshal bare turnstile task: %v", err)
+	}
+	if string(bare) != `{"url":"u","sitekey":"k"}` {
+		t.Errorf("bare turnstile task = %s", bare)
+	}
+
+	waf, err := json.Marshal(uncaptchaExecuteRequest{
+		TaskType: uncaptchaTaskWAF,
+		TaskData: uncaptchaWAFTask{
+			URL:       analyticsViewURL,
+			Proxy:     "http://u:p@1.1.1.1:8080",
+			UserAgent: "UA",
+			HTML:      "<html></html>",
+		},
+	})
+	if err != nil {
+		t.Fatalf("marshal waf task: %v", err)
+	}
+	// encoding/json escapes <, > and & by default, so the challenge HTML goes
+	// out as \u003c... — a different encoding of the same string, which the
+	// service decodes back to the original. CapMonster never hits this because
+	// it takes the interstitial base64-encoded.
+	wantWAF := `{"task_type":"waf","task_data":{"url":"` + analyticsViewURL +
+		`","proxy":"http://u:p@1.1.1.1:8080","user_agent":"UA","html":"\u003chtml\u003e\u003c/html\u003e"}}`
+	if string(waf) != wantWAF {
+		t.Errorf("waf task =\n%s\nwant\n%s", waf, wantWAF)
+	}
+
+	var decoded struct {
+		TaskData struct {
+			HTML string `json:"html"`
+		} `json:"task_data"`
+	}
+	if err := json.Unmarshal(waf, &decoded); err != nil {
+		t.Fatalf("decode waf task: %v", err)
+	}
+	if decoded.TaskData.HTML != "<html></html>" {
+		t.Errorf("challenge html round-tripped as %q", decoded.TaskData.HTML)
+	}
+}
+
+// TestUncaptchaResponseDecode decodes the documented success and failure
+// envelopes and checks the fields the provider reads out of them.
+func TestUncaptchaResponseDecode(t *testing.T) {
+	const turnstileBody = `{"success":true,"data":{"solution":{"token":"0.AuR5g8kP"}}}`
+	var turnstile uncaptchaResponse
+	if err := json.Unmarshal([]byte(turnstileBody), &turnstile); err != nil {
+		t.Fatalf("decode turnstile response: %v", err)
+	}
+	if !turnstile.Success {
+		t.Error("turnstile response decoded as unsuccessful")
+	}
+	if turnstile.Data.Solution.Token != "0.AuR5g8kP" {
+		t.Errorf("token = %q", turnstile.Data.Solution.Token)
+	}
+
+	const wafBody = `{"success":true,"data":{"solution":{"clearance":"abc123","cf_bm":"xyz789",` +
+		`"cf_rt":"token123","headers":{"user-agent":"Mozilla/5.0 UA","sec-ch-ua-mobile":"?0"},` +
+		`"attributes":{"a":"value1"}}}}`
+	var waf uncaptchaResponse
+	if err := json.Unmarshal([]byte(wafBody), &waf); err != nil {
+		t.Fatalf("decode waf response: %v", err)
+	}
+	if waf.Data.Solution.Clearance != "abc123" {
+		t.Errorf("clearance = %q", waf.Data.Solution.Clearance)
+	}
+	if got := solvedUserAgent(waf.Data.Solution.Headers); got != "Mozilla/5.0 UA" {
+		t.Errorf("solved user-agent = %q", got)
+	}
+
+	const failureBody = `{"success":false,"message":"task timed out"}`
+	var failure uncaptchaResponse
+	if err := json.Unmarshal([]byte(failureBody), &failure); err != nil {
+		t.Fatalf("decode failure response: %v", err)
+	}
+	if failure.Success || failure.Message != "task timed out" {
+		t.Errorf("failure decoded as success %v message %q", failure.Success, failure.Message)
+	}
+}
+
+func TestSolvedUserAgent(t *testing.T) {
+	if got := solvedUserAgent(map[string]string{"User-Agent": "UA"}); got != "UA" {
+		t.Errorf("capitalised header lookup = %q, want %q", got, "UA")
+	}
+	if got := solvedUserAgent(map[string]string{"sec-ch-ua-mobile": "?0"}); got != "" {
+		t.Errorf("missing user-agent = %q, want empty", got)
+	}
+	if got := solvedUserAgent(nil); got != "" {
+		t.Errorf("nil headers = %q, want empty", got)
+	}
+}
+
+// TestUncaptchaRetryable covers which failures are re-sent. uncaptcha signals
+// failure through the HTTP status, and retrying a permanent rejection (bad key,
+// no balance, blacklisted URL) would only burn the caller's time budget.
+func TestUncaptchaRetryable(t *testing.T) {
+	retryable := []int{429, 500, 502, 503, 504}
+	for _, status := range retryable {
+		if !uncaptchaRetryable(status) {
+			t.Errorf("status %d should be retryable", status)
+		}
+	}
+	permanent := []int{200, 400, 401, 402, 403, 404}
+	for _, status := range permanent {
+		if uncaptchaRetryable(status) {
+			t.Errorf("status %d should not be retryable", status)
+		}
 	}
 }

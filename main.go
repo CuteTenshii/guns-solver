@@ -37,9 +37,8 @@ func fatalf(format string, a ...any) {
 func main() {
 	username := flag.String("username", "", "Profile username")
 	captchaProviderName := flag.String("captcha-provider", "",
-		"Captcha solving service: "+strings.Join(supportedCaptchaProviders, " or ")+" (default "+providerCapmonster+")")
+		"Captcha solving service: "+strings.Join(supportedCaptchaProviders, ", ")+" (default "+providerCapmonster+")")
 	captchaKey := flag.String("captcha-key", "", "API key for the selected captcha provider, used to solve Turnstile and mint cf_clearance")
-	capmonsterKey := flag.String("capmonster-key", "", "Deprecated: use -captcha-key with -captcha-provider "+providerCapmonster)
 	proxy := flag.String("proxy", "", "Proxy URL for guns.lol requests (e.g. http://user:pass@host:port). A {session} placeholder is replaced with a fresh token per worker for rotating sticky-session proxies")
 	linkID := flag.String("link-id", "", "Link UUID to record a click event instead of a profile view")
 	count := flag.Int("count", 1, "Number of profile views to record")
@@ -56,17 +55,10 @@ func main() {
 	if *username == "" {
 		fatalf("Missing required flag %s (example: guns-solver -username <username>)", bold("-username"))
 	}
-	providerName, apiKey, notice, err := captchaFlags{
-		provider:      *captchaProviderName,
-		key:           *captchaKey,
-		capmonsterKey: *capmonsterKey,
+	providerName, apiKey := captchaFlags{
+		provider: *captchaProviderName,
+		key:      *captchaKey,
 	}.resolve()
-	if err != nil {
-		fatalf("%s", err)
-	}
-	if notice != "" {
-		warnln("%s", notice)
-	}
 	if apiKey == "" {
 		fatalf("Missing required flag %s (needed to solve Cloudflare Turnstile)", bold("-captcha-key"))
 	}

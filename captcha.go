@@ -25,11 +25,12 @@ const taskPollInterval = 3 * time.Second
 const (
 	providerCapmonster = "capmonster"
 	providerSolverify  = "solverify"
+	providerUncaptcha  = "uncaptcha"
 )
 
 // supportedCaptchaProviders is the accepted -captcha-provider set, in the order
 // it is shown to the user.
-var supportedCaptchaProviders = []string{providerCapmonster, providerSolverify}
+var supportedCaptchaProviders = []string{providerCapmonster, providerSolverify, providerUncaptcha}
 
 // turnstileRequest describes the Turnstile widget guarding a profile view.
 type turnstileRequest struct {
@@ -99,6 +100,8 @@ func newCaptchaProvider(name, apiKey string) (captchaProvider, error) {
 		return &capmonsterProvider{apiKey: apiKey}, nil
 	case providerSolverify:
 		return &solverifyProvider{apiKey: apiKey}, nil
+	case providerUncaptcha:
+		return &uncaptchaProvider{apiKey: apiKey}, nil
 	default:
 		return nil, fmt.Errorf("unknown captcha provider %q (supported: %s)",
 			name, strings.Join(supportedCaptchaProviders, ", "))
@@ -109,31 +112,17 @@ func newCaptchaProvider(name, apiKey string) (captchaProvider, error) {
 type captchaFlags struct {
 	provider string
 	key      string
-	// capmonsterKey is the deprecated -capmonster-key flag, which predates
-	// multi-provider support and implies the capmonster provider.
-	capmonsterKey string
 }
 
-// resolve settles the provider name and API key from the flags, returning a
-// notice when a deprecated flag supplied them.
-func (f captchaFlags) resolve() (name, key, notice string, err error) {
+// resolve settles the provider name and API key from the flags, applying the
+// default provider when none was named. An unknown name is not rejected here —
+// newCaptchaProvider reports that, alongside the supported set.
+func (f captchaFlags) resolve() (name, key string) {
 	name, key = f.provider, f.key
-
-	if f.capmonsterKey != "" {
-		if f.key != "" {
-			return "", "", "", fmt.Errorf("-capmonster-key and -captcha-key are mutually exclusive; use -captcha-key")
-		}
-		if name != "" && name != providerCapmonster {
-			return "", "", "", fmt.Errorf("-capmonster-key cannot be used with -captcha-provider %s", name)
-		}
-		name, key = providerCapmonster, f.capmonsterKey
-		notice = "-capmonster-key is deprecated; use -captcha-key with -captcha-provider capmonster"
-	}
-
 	if name == "" {
 		name = providerCapmonster
 	}
-	return name, key, notice, nil
+	return name, key
 }
 
 // proxyParts is a proxy URL split into the discrete fields captcha services
@@ -177,34 +166,49 @@ func parseProxyParts(rawURL string) (proxyParts, error) {
 	return p, nil
 }
 
-// postJSON posts body as JSON to endpoint and decodes the reply into out.
+// postJSON posts body as JSON to endpoint and decodes the reply into out. It
+// is the form used by services that authenticate through the request body and
+// report failures inside it, so the HTTP status carries no information.
 func postJSON(ctx context.Context, endpoint string, body, out any) error {
+	_, err := postJSONWithHeaders(ctx, endpoint, nil, body, out)
+	return err
+}
+
+// postJSONWithHeaders posts body as JSON to endpoint with additional request
+// headers, decodes the reply into out, and returns the HTTP status alongside
+// any error. Services that authenticate through a header and signal failure
+// through the status line need both; the status is also returned with an error
+// so a caller can tell a transient failure from a permanent one.
+func postJSONWithHeaders(ctx context.Context, endpoint string, headers map[string]string, body, out any) (int, error) {
 	payload, err := json.Marshal(body)
 	if err != nil {
-		return err
+		return 0, err
 	}
 
 	req, err := http.NewRequestWithContext(ctx, "POST", endpoint, bytes.NewReader(payload))
 	if err != nil {
-		return err
+		return 0, err
 	}
 	req.Header.Set("Content-Type", "application/json")
+	for name, value := range headers {
+		req.Header.Set(name, value)
+	}
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	defer resp.Body.Close()
 
 	data, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return fmt.Errorf("read %s response: %w", endpoint, err)
+		return resp.StatusCode, fmt.Errorf("read %s response: %w", endpoint, err)
 	}
 	if err := json.Unmarshal(data, out); err != nil {
-		return fmt.Errorf("decode %s response (status %d): %w: %s",
+		return resp.StatusCode, fmt.Errorf("decode %s response (status %d): %w: %s",
 			endpoint, resp.StatusCode, err, truncate(string(data), 200))
 	}
-	return nil
+	return resp.StatusCode, nil
 }
 
 // pollTask calls fetch every taskPollInterval until it reports the task

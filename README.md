@@ -17,6 +17,7 @@ For an alternative to guns.lol, check out [Miwa.lol](https://miwa.lol)! It's bet
 - An API key for one of the supported captcha providers, which solve the Turnstile and mint the Cloudflare `cf_clearance` cookie:
   - [CapMonster](https://capmonster.cloud/) — `-captcha-provider capmonster` (the default)
   - [Solverify](https://solverify.net/) — `-captcha-provider solverify`
+  - [uncaptcha.io](https://uncaptcha.io/) — `-captcha-provider uncaptcha`
 
 ### Steps 
 
@@ -25,12 +26,10 @@ For an alternative to guns.lol, check out [Miwa.lol](https://miwa.lol)! It's bet
 - Then run the program:
 ```bash
 Usage of ./guns-solver.exe:
-  -capmonster-key string
-        Deprecated: use -captcha-key with -captcha-provider capmonster
   -captcha-key string
         API key for the selected captcha provider, used to solve Turnstile and mint cf_clearance
   -captcha-provider string
-        Captcha solving service: capmonster or solverify (default capmonster)
+        Captcha solving service: capmonster, solverify, uncaptcha (default capmonster)
   -concurrency int
         Maximum views to record simultaneously (default: min(count, 5))
   -count int
@@ -52,9 +51,10 @@ To add a view to a user:
 ./guns-solver.exe -username <username> -captcha-key ... -proxy ...
 ```
 
-To use Solverify instead of CapMonster:
+To use another captcha provider instead of CapMonster:
 ```shell
 ./guns-solver.exe -username <username> -captcha-provider solverify -captcha-key ... -proxy ...
+./guns-solver.exe -username <username> -captcha-provider uncaptcha -captcha-key ... -proxy ...
 ```
 
 To add many views at once (50 total, 8 in flight, each on its own IP):
@@ -71,11 +71,15 @@ To add a link click:
 
 guns.lol puts a Cloudflare bot check on the analytics endpoint that gates by the presence of `cf_clearance`, a client without this cookie gets a Cloudflare challenge (403).
 
-When the tool hits that challenge, it asks the selected captcha provider to clear it — CapMonster's Cloudflare Challenge task (`cloudflareTaskType: cf_clearance`), which replays the captured interstitial, or Solverify's `interstitial` task, which re-drives the challenged request itself (`POST /api/analytics/view`, since that is the request Cloudflare challenges — the profile page is served to a real browser unchallenged). Either returns a `cf_clearance` cookie. The tool caches it under the temp dir (`<tmp>/guns-solver-pow/cf_clearance.txt`, reused across runs) and retries the request directly.
+When the tool hits that challenge, it asks the selected captcha provider to clear it:
+
+- **CapMonster** — the Cloudflare Challenge task (`cloudflareTaskType: cf_clearance`), which replays the captured interstitial.
+- **Solverify** — the `interstitial` task, which re-drives the challenged request itself (`POST /api/analytics/view`, since that is the request Cloudflare challenges — the profile page is served to a real browser unchallenged).
+- **uncaptcha.io** — the `waf` task, which like CapMonster replays the captured interstitial. (Its `wafauto` task is not used: that one makes the follow-up request itself, but ours has to carry our own signed view payload.)
+
+All three return a `cf_clearance` cookie. The tool caches it under the temp dir (`<tmp>/guns-solver-pow/cf_clearance.txt`, reused across runs) and retries the request directly.
 
 `cf_clearance` is bound to a single IP and User-Agent, so `-proxy` is **required** to mint one, and the provider egresses through that same proxy so the cookie matches the tool's IP. Solverify only accepts `http` proxies for this task.
-
-The `-capmonster-key` flag still works and selects CapMonster, but it is deprecated in favour of `-captcha-provider` / `-captcha-key`.
 
 ## Botting your views
 
@@ -100,3 +104,5 @@ This is built in — no shell loops or GNU Parallel needed. Use `-count` for how
 ./guns-solver -username <username> -captcha-key ... -count 100 -concurrency 40 -proxy "http://user:pass_session-{session}@host:port"
 ```
 Each view runs on its own proxy session (its own IP and `cf_clearance`), so the counts are what you'd expect. A live progress board shows each worker; when the output is piped/redirected it falls back to one line per completed view. Press `Ctrl-C` to stop early — it reports what already completed.
+
+Keep `-concurrency` within whatever your captcha plan allows. Captcha keys have their own concurrency limits, and going over just means workers sit waiting on the provider instead of solving. With uncaptcha.io the limit is enforced per key with an HTTP 429 — the tool backs off and retries those (a rejected solve isn't charged), but you'll go faster by matching `-concurrency` to your plan than by over-subscribing it.
